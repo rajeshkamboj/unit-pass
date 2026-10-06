@@ -1,25 +1,29 @@
-import type { Metadata } from 'next';
+import Link from 'next/link';
 
-export const metadata: Metadata = {
-  title: 'UnitPass',
-  description: 'Turn Every HVAC Installation Into Repeat Service Revenue.',
-};
-
-export default function AuthLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function AuthLayout({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="w-full max-w-md space-y-8 p-6">
-        <div className="flex items-center justify-center">
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 text-blue-600" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 2.25c-5.385 0-9.75 4.365-9.75 9.75s4.365 9.75 9.75 9.75 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25zm0 19.5c-5.416 0-9.75-4.334-9.75-9.75S6.584 2.25 12 2.25s9.75 4.334 9.75 9.75-4.334 9.75-9.75 9.75z" />
-          </svg>
-        </div>
-        <div className="w-full space-y-4">{children}</div>
-      </div>
+    <div className="flex min-h-screen flex-col items-center justify-center bg-muted/30 px-4 py-10">
+      <Link href="/" className="mb-6 flex items-center gap-2" aria-label="UnitPass home">
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          className="h-9 w-9 text-primary"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.75"
+          aria-hidden="true"
+        >
+          <rect x="3" y="3" width="7" height="7" rx="1" />
+          <rect x="14" y="3" width="7" height="7" rx="1" />
+          <rect x="3" y="14" width="7" height="7" rx="1" />
+          <path d="M14 14h3v3h-3zM19 19h2v2h-2z" />
+        </svg>
+        <span className="text-xl font-semibold tracking-tight">UnitPass</span>
+      </Link>
+      <div className="w-full max-w-md">{children}</div>
+      <p className="mt-6 text-center text-xs text-muted-foreground">
+        The Digital Service Passport for HVAC Equipment
+      </p>
     </div>
   );
 }

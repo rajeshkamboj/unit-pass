@@ -648,6 +648,18 @@ phase's acceptance criteria, and say "deferred to Phase N" instead of building i
 | 2026-10-06 | (pre-1) | Playbook created; canonical app dir recommended as `src/app` with root `app/` deleted | root `app/` holds 3 placeholder/broken files; all product code + the `@/*` alias live in `src/`; Next falls back to `src/app` once root `app/` is gone |
 | 2026-10-06 | (pre-1) | Playbook records Vue-free, no-framework-migration stance: Next 14 App Router + Tailwind 3 + shadcn + pnpm 9 | avoids churn, matches installed dependencies |
 | 2026-10-06 | (pre-1) | Playbook requires all writes via Server Actions with server-derived `company_id` | satisfies rule 10 without client trust; simpler than duplicating checks client-side |
+| 2026-10-07 | 1 | Canonical app dir = **`src/app`**; root `app/`, `src/pages/`, all Vite/Dyad leftovers deleted; `src/app` fixed in place | zero product files moved; `@/*` alias, shadcn kit and product pages already under `src/` |
+| 2026-10-07 | 1 | Supabase clients via `@supabase/ssr` (`createBrowserClient` / `createServerClient`); `@supabase/auth-helpers-nextjs` rejected | deprecated upstream; ssr package is the supported cookie/PKCE flow |
+| 2026-10-07 | 1 | Env checks are **lazy** (inside client factories), not module-level | module-level throw would make `next build` depend on credentials; runtime still fails fast and names the missing variable |
+| 2026-10-07 | 1 | Tenancy source of truth = `company_members`; `profiles.company_id` is a UI pointer only | matches global rule 10; the legacy schema conflated the two |
+| 2026-10-07 | 1 | RLS predicates use `SECURITY DEFINER` helpers (`is_company_member` / `is_company_admin`) with `set search_path = ''` | fixes the legacy "infinite recursion detected in policy for company_members" bug |
+| 2026-10-07 | 1 | Companies are created **only** through `public.create_company_with_owner()`; no INSERT policy on `companies` | prevents arbitrary-company creation and self-granted membership |
+| 2026-10-07 | 1 | Session gate exists twice: `middleware.ts` (refresh + `/dashboard` guard) and the server-side dashboard layout (`requireUser()`) | defence in depth; layout also handles the "signed in but no company" case via `requireCompany()` |
+| 2026-10-07 | 1 | ESLint moved from the Vite flat config to `.eslintrc.json` (`next/core-web-vitals`) with ESLint 8 + `eslint-config-next@14.2.35` | `next lint` could not read the flat config at all (lint was unavailable in the baseline) |
+| 2026-10-07 | 1 | `postcss.config.js` converted to CommonJS | ESM `export default` in a CJS package broke the Tailwind pipeline (`must export a plugins key`) |
+| 2026-10-07 | 1 | Root `app/`… Vite leftovers removed; `.next/**` and `*.tsbuildinfo` untracked and gitignored; legacy schema moved to `supabase/legacy/schema.sql.txt` | baseline hygiene; migrations are authoritative |
+| 2026-10-07 | 1 | Added `supabase/tests/local/postgres_shim.sql` so the RLS suite can run on a plain Postgres without Supabase credentials | makes the security tests reproducible offline; the canonical path stays `psql "$SUPABASE_DB_URL"` |
+| 2026-10-07 | 1 | Unused shadcn components kept; unused deps left for Phase 8 | cost control: no rewrites/removals without evidence of benefit |
 
 Future phases: add a row per decision that changes architecture, dependencies, schema, or security posture.
 

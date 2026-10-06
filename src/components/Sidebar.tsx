@@ -1,98 +1,131 @@
+'use client';
+
+import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { signOut } from '@/auth';
+import { LayoutDashboard, LogOut, Menu, X } from 'lucide-react';
+import { signOut } from '@/app/auth/actions';
+import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 
-export default function Sidebar() {
+/**
+ * Navigation for the dashboard shell.
+ *
+ * Only functionality that actually exists is listed (Phase 1: Dashboard).
+ * Later phases add their entries together with the feature.
+ */
+const NAV_ITEMS = [{ href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard }] as const;
+
+export function Sidebar({ companyName, userEmail }: { companyName: string | null; userEmail: string | null }) {
   const pathname = usePathname();
+  const [mobileOpen, setMobileOpen] = useState(false);
 
-  const isActive = (href: string) => pathname.startsWith(href);
+  const nav = (
+    <nav className="flex flex-1 flex-col gap-1" aria-label="Main">
+      {NAV_ITEMS.map((item) => {
+        const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+        const Icon = item.icon;
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            onClick={() => setMobileOpen(false)}
+            aria-current={active ? 'page' : undefined}
+            className={cn(
+              'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+              active
+                ? 'bg-primary/10 text-primary'
+                : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+            )}
+          >
+            <Icon className="h-4 w-4" aria-hidden="true" />
+            {item.label}
+          </Link>
+        );
+      })}
+    </nav>
+  );
 
   return (
-    <aside className="w-64 bg-white border-r border-gray-200">
-      <div className="flex items-center px-4 py-6">
-        <Link href="/dashboard" className="flex items-center space-x-3">
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 2.25c-5.385 0-9.75 4.365-9.75 9.75s4.365 9.75 9.75 9.75 9.75-4.365 9.75-9.75S17.385 2.25 12 2.25zm0 19.5c-5.416 0-9.75-4.334-9.75-9.75S6.584 2.25 12 2.25s9.75 4.334 9.75 9.75-4.334 9.75-9.75 9.75z" />
-          </svg>
-          <span className="font-semibold text-lg">UnitPass</span>
-        </Link>
-      </div>
-      <nav className="mt-6 space-y-1">
-        <Link
-          href="/dashboard"
-          className={`flex items-center px-4 py-3 text-sm font-medium ${isActive('/dashboard') ? 'bg-blue-50 text-blue-600' : 'text-gray-700 hover:bg-gray-50'}`}
+    <>
+      {/* Mobile top bar */}
+      <header className="flex items-center justify-between border-b bg-background px-4 py-3 md:hidden">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="text-base font-semibold tracking-tight">UnitPass</span>
+          {companyName ? (
+            <span className="truncate text-sm text-muted-foreground">· {companyName}</span>
+          ) : null}
+        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-expanded={mobileOpen}
+          aria-controls="mobile-nav"
+          aria-label={mobileOpen ? 'Close navigation' : 'Open navigation'}
+          onClick={() => setMobileOpen((open) => !open)}
         >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-3" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l2-2a1 1 0 00-1.414-1.414L11 7.586V3a1 1 0 10-2 0v4.586l-.293-.293z" clipRule="evenodd" />
+          {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+        </Button>
+      </header>
+
+      {mobileOpen ? (
+        <div id="mobile-nav" className="border-b bg-background px-4 py-3 md:hidden">
+          {/* Close control keeps the overlay usable with one thumb */}
+          <div className="mb-2 flex justify-end">
+            <Button variant="ghost" size="sm" onClick={() => setMobileOpen(false)}>
+              <X className="mr-1 h-4 w-4" aria-hidden="true" /> Close
+            </Button>
+          </div>
+          {nav}
+          <AccountBlock userEmail={userEmail} className="mt-3 border-t pt-3" />
+        </div>
+      ) : null}
+
+      {/* Desktop sidebar */}
+      <aside className="hidden w-64 shrink-0 flex-col border-r bg-background p-4 md:flex">
+        <Link href="/dashboard" className="mb-6 flex items-center gap-2" aria-label="UnitPass dashboard">
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            className="h-7 w-7 text-primary"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.75"
+            aria-hidden="true"
+          >
+            <rect x="3" y="3" width="7" height="7" rx="1" />
+            <rect x="14" y="3" width="7" height="7" rx="1" />
+            <rect x="3" y="14" width="7" height="7" rx="1" />
+            <path d="M14 14h3v3h-3zM19 19h2v2h-2z" />
           </svg>
-          Dashboard
+          <span className="text-lg font-semibold tracking-tight">UnitPass</span>
         </Link>
-        <Link
-          href="/dashboard/customers"
-          className={`flex items-center px-4 py-3 text-sm font-medium ${isActive('/dashboard/customers') ? 'bg-blue-50 text-blue-600' : 'text-gray-700 hover:bg-gray-50'}`}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-3" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zm-1 4a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
-          </svg>
-          Customers
-        </Link>
-        <Link
-          href="/dashboard/equipment"
-          className={`flex items-center px-4 py-3 text-sm font-medium ${isActive('/dashboard/equipment') ? 'bg-blue-50 text-blue-600' : 'text-gray-700 hover:bg-gray-50'}`}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-3" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M9 4a1 1 0 100 2v2.586l-2.293 2.293a1 1 0 001.415 1.415L12 10.414V16a1 1 0 102 0v-4a1 1 0 00-.586-1.415l-.707-.707A1 1 0 0010 7.586V4a1 1 0 100-2zM5 4a1 1 0 100 2H3a1 1 0 000-2h2z" clipRule="evenodd" />
-          </svg>
-          Equipment
-        </Link>
-        <Link
-          href="/dashboard/services"
-          className={`flex items-center px-4 py-3 text-sm font-medium ${isActive('/dashboard/services') ? 'bg-blue-50 text-blue-600' : 'text-gray-700 hover:bg-gray-50'}`}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-3" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M8 7a3 3 0 100-6 3 3 0 000 6zm4 8a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
-          </svg>
-          Services
-        </Link>
-        <Link
-          href="/dashboard/documents"
-          className={`flex items-center px-4 py-3 text-sm font-medium ${isActive('/dashboard/documents') ? 'bg-blue-50 text-blue-600' : 'text-gray-700 hover:bg-gray-50'}`}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-3" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M6 2a2 2 0 00-2 2v5.172l2 2V4a2 2 0 012-2h2zm4 0a2 2 0 00-2 2v5.172l2 2V4a2 2 0 012-2h2zm4 0a2 2 0 00-2 2v5.172l2 2V4a2 2 0 012-2h2zm-4 9a2 2 0 00-2 2v2H6v-2a2 2 0 00-2-2 2 2 0 002-2h2a2 2 0 002 2v2h2a2 2 0 002-2v-2a2 2 0 00-2-2z" clipRule="evenodd" />
-          </svg>
-          Documents
-        </Link>
-        <Link
-          href="/dashboard/billing"
-          className={`flex items-center px-4 py-3 text-sm font-medium ${isActive('/dashboard/billing') ? 'bg-blue-50 text-blue-600' : 'text-gray-700 hover:bg-gray-50'}`}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-3" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M2 3a1 1 0 011-1h2.586l1.293-1.293a1 1 0 111.414 1.414L9.414 7H18a1 1 0 010 2H9.414l1.293 1.293a1 1 0 01-1.414 1.414L4 8.586V18a1 1 0 01-1 1H2a1 1 0 01-1-1V3z" clipRule="evenodd" />
-          </svg>
-          Billing
-        </Link>
-        <Link
-          href="/dashboard/settings"
-          className={`flex items-center px-4 py-3 text-sm font-medium ${isActive('/dashboard/settings') ? 'bg-blue-50 text-blue-600' : 'text-gray-700 hover:bg-gray-50'}`}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-3" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M6.764 17.764a1 1 0 01-1.414-1.414l1.414-1.414A3 3 0 019 12v1a3 3 0 00-5.236 2.236zm10.472-8.472a3 3 0 00-5.236-2.236 1 1 0 01-1.414-1.414l1.414-1.414A1 1 0 015 5.757V4a1 1 0 012 0v1.757a1 1 0 01.586.807l1.06-1.06a1 1 0 111.414 1.414l1.224 1.224a3 3 0 004.242-4.242zm-3.536 5.036a1 1 0 01-1.414 1.414l-1.414 1.414a1 1 0 01-1.414-1.414l1.414-1.414a1 1 0 011.414 1.414zM9 18a1 1 0 01-1.414-1.414l1.414-1.414A3 3 0 009 15v3a3 3 0 002.598-.732l1.06-1.06a1 1 0 011.414 1.414l1.224 1.224a3 3 0 00-4.242 4.242z" clipRule="evenodd" />
-          </svg>
-          Settings
-        </Link>
-      </nav>
-      <div className="mt-auto px-4 py-4 border-t border-gray-200">
-        <button
-          onClick={signOut}
-          className="w-full flex items-center px-3 py-2 text-left text-gray-500 hover:text-gray-700"
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-3" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M4 4a1 1 0 112 0v1h10a1 1 0 110 2H7v1h9a1 1 0 110 2H4v1a1 1 0 11-2 0V4z" clipRule="evenodd" />
-          </svg>
-          Sign Out
-        </button>
-      </div>
-    </aside>
+
+        {companyName ? (
+          <p className="mb-4 truncate px-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {companyName}
+          </p>
+        ) : null}
+
+        {nav}
+        <AccountBlock userEmail={userEmail} className="mt-4 border-t pt-4" />
+      </aside>
+    </>
+  );
+}
+
+function AccountBlock({ userEmail, className }: { userEmail: string | null; className?: string }) {
+  return (
+    <div className={cn('space-y-2', className)}>
+      <p className="truncate px-3 text-xs text-muted-foreground" title={userEmail ?? undefined}>
+        {userEmail ?? 'Signed in'}
+      </p>
+      <form action={signOut}>
+        <Button type="submit" variant="ghost" className="w-full justify-start gap-3 px-3">
+          <LogOut className="h-4 w-4" aria-hidden="true" />
+          Sign out
+        </Button>
+      </form>
+    </div>
   );
 }
