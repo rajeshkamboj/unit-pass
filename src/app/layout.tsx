@@ -1,27 +1,26 @@
-import './globals.css';
-import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
-import { SupabaseProvider } from '@supabase/auth-helpers-nextjs';
-import { supabase } from '@/lib/supabase';
-
-const inter = Inter({ subsets: ['latin'] });
+import type { Metadata, Viewport } from 'next';
+import '@/globals.css';
+import { Providers } from '@/app/providers';
 
 export const metadata: Metadata = {
-  title: 'UnitPass',
+  title: {
+    default: 'UnitPass — The Digital Service Passport for HVAC Equipment',
+    template: '%s | UnitPass',
+  },
   description: 'Turn Every HVAC Installation Into Repeat Service Revenue.',
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+};
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className={inter.className}>
-        <SupabaseProvider supabase={supabase}>
-          {children}
-        </SupabaseProvider>
+      {/* System font stack (no next/font/google: builds must not depend on external font fetches). */}
+      <body className="min-h-screen bg-background font-sans text-foreground antialiased">
+        <Providers>{children}</Providers>
       </body>
     </html>
   );

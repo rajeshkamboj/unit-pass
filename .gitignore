@@ -7,10 +7,22 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependencies / build output
 node_modules
 dist
 dist-ssr
+.next/
+out/
+build/
+*.tsbuildinfo
 *.local
+.vercel
+.turbo
+
+# Environment (never commit real values; .env.example is the template)
+.env
+.env.*
+!.env.example
 
 # Editor directories and files
 .vscode/*
@@ -23,7 +35,7 @@ dist-ssr
 *.sln
 *.sw?
 
-# Playwright test artifacts
+# Test artifacts
 /test-results/
 /playwright-report/
 /playwright/.cache/
