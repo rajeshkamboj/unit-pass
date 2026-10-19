@@ -8,8 +8,8 @@
 -- Run:
 --   psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/rls_tenant_isolation.sql
 --
--- Expected result: Phase 1, Phase 2, Phase 3 and Phase 4 "PASS: ..." notices and
--- a final "ALL CHECKS PASSED (Phase 1 + Phase 2 + Phase 3 + Phase 4 tenant
+-- Expected result: Phase 1–5 "PASS: ..." notices and
+-- a final "ALL CHECKS PASSED (Phase 1 + Phase 2 + Phase 3 + Phase 4 + Phase 5 tenant
 -- isolation)" notice, ending with ROLLBACK. Any failed assertion raises an
 -- exception -> non-zero exit.
 --
@@ -1159,11 +1159,197 @@ begin
 end
 $$;
 
+-- =============================================================================
+-- SECTION 5 — PHASE 5: document rows, public whitelist, PRIVATE storage policies
+-- =============================================================================
+reset role;
+insert into public.documents (id, equipment_id, name, type, visibility, storage_path, file_name, mime_type, file_size)
+values
+ ('99999999-9999-4999-8999-999999999991', '55555555-5555-4555-8555-555555555551', 'Alpha public warranty', 'Warranty', 'Public',
+  'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/55555555-5555-4555-8555-555555555551/99999999-9999-4999-8999-999999999991-warranty.pdf', 'warranty.pdf', 'application/pdf', 128),
+ ('99999999-9999-4999-8999-999999999992', '55555555-5555-4555-8555-555555555551', 'PRIVATE_DOC_NAME_MARKER', 'Installation Invoice', 'Private',
+  'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/55555555-5555-4555-8555-555555555551/99999999-9999-4999-8999-999999999992-invoice.pdf', 'invoice.pdf', 'application/pdf', 256),
+ ('99999999-9999-4999-8999-999999999993', '66666666-6666-4666-8666-666666666661', 'Bravo public manual', 'User Manual', 'Public',
+  'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/66666666-6666-4666-8666-666666666661/99999999-9999-4999-8999-999999999993-manual.pdf', 'manual.pdf', 'application/pdf', 512),
+ ('99999999-9999-4999-8999-999999999994', '55555555-5555-4555-8555-555555555552', 'Retired unit warranty', 'Warranty', 'Public',
+  'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/55555555-5555-4555-8555-555555555552/99999999-9999-4999-8999-999999999994-warranty.pdf', 'warranty.pdf', 'application/pdf', 128);
+
+-- Metadata fixtures only, NEVER fake real file bytes. Everything is rolled back.
+insert into storage.objects (bucket_id, name)
+select 'documents', storage_path from public.documents
+where id in ('99999999-9999-4999-8999-999999999991', '99999999-9999-4999-8999-999999999992',
+             '99999999-9999-4999-8999-999999999993', '99999999-9999-4999-8999-999999999994');
+-- Deliberately stale profile pointer: authorization must still come from membership.
+update public.profiles set company_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+where id = '11111111-1111-4111-8111-111111111111';
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated"}';
+
+do $$ declare n integer; begin
+  select count(*) into n from public.documents where company_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  if n <> 3 then raise exception 'FAIL: A should see 3 own documents, got %', n; end if;
+  if exists (select 1 from public.documents where company_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb') then
+    raise exception 'FAIL: A can read B documents'; end if;
+  update public.documents set name = 'Hijacked' where id = '99999999-9999-4999-8999-999999999993';
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'FAIL: A updated B document'; end if;
+  delete from public.documents where id = '99999999-9999-4999-8999-999999999993';
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'FAIL: A deleted B document'; end if;
+  update public.documents set name = 'Alpha public warranty edited' where id = '99999999-9999-4999-8999-999999999991';
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'FAIL: A cannot edit its own document'; end if;
+  raise notice 'PASS: 5.1 A reads/edits own documents only; B select/update/delete denied';
+end $$;
+
+do $$ declare rejected boolean := false; begin
+  begin
+    insert into public.documents (equipment_id, company_id, name, type, storage_path, file_name, mime_type, file_size)
+    values ('66666666-6666-4666-8666-666666666661', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Cross tenant', 'Other',
+      'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/66666666-6666-4666-8666-666666666661/99999999-9999-4999-8999-999999999995-test.pdf', 'test.pdf', 'application/pdf', 10);
+  exception when insufficient_privilege then rejected := true; end;
+  if not rejected then raise exception 'FAIL: A inserted document against B equipment'; end if;
+  raise notice 'PASS: 5.2 cross-tenant equipment insert rejected by RLS after tenant resolution';
+end $$;
+
+do $$ declare v_id uuid; v_company uuid; v_uploader uuid; n integer; begin
+  insert into public.documents (company_id, equipment_id, name, type, storage_path, file_name, mime_type, file_size, uploaded_by)
+  values ('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', '55555555-5555-4555-8555-555555555551', 'Spoof test', 'Other',
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/55555555-5555-4555-8555-555555555551/99999999-9999-4999-8999-999999999995-test.pdf', 'test.pdf', 'application/pdf', 10,
+    '22222222-2222-4222-8222-222222222222') returning id, company_id, uploaded_by into v_id, v_company, v_uploader;
+  if v_company <> 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' or v_uploader <> '11111111-1111-4111-8111-111111111111' then
+    raise exception 'FAIL: forged tenant/uploader survived the trigger'; end if;
+  update public.documents set company_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' where id = v_id;
+  if (select company_id from public.documents where id = v_id) <> v_company then raise exception 'FAIL: update forged the company'; end if;
+  if (select visibility from public.documents where id = v_id) <> 'Private' then raise exception 'FAIL: new documents not private by default'; end if;
+  if (select file_url from public.documents where id = v_id) is not null then raise exception 'FAIL: new document uses legacy file_url'; end if;
+  delete from public.documents where id = v_id;
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'FAIL: A cannot delete own document'; end if;
+  raise notice 'PASS: 5.3 tenant/uploader spoof overwritten; private default; no legacy URL; own delete allowed';
+end $$;
+
+do $$ declare rejected boolean := false; begin
+  begin
+    update public.documents set storage_path = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/66666666-6666-4666-8666-666666666661/99999999-9999-4999-8999-999999999993-manual.pdf'
+    where id = '99999999-9999-4999-8999-999999999991';
+  exception when check_violation then rejected := true; end;
+  if not rejected then raise exception 'FAIL: document storage path is mutable'; end if;
+  rejected := false;
+  begin
+    insert into public.documents (equipment_id, name, type, storage_path, file_name, mime_type, file_size)
+    values ('55555555-5555-4555-8555-555555555551', 'Forged path', 'Other',
+      'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/66666666-6666-4666-8666-666666666661/99999999-9999-4999-8999-999999999993-manual.pdf', 'manual.pdf', 'application/pdf', 10);
+  exception when check_violation then rejected := true; end;
+  if not rejected then raise exception 'FAIL: own row accepted another tenant storage path'; end if;
+  raise notice 'PASS: 5.4 forged storage paths cannot be inserted or substituted for admin signing';
+end $$;
+
+do $$ declare p jsonb; keys text[]; begin
+  p := public.get_public_unitpass('cccccccc-cccc-4ccc-8ccc-ccccccccccc1');
+  if jsonb_array_length(p->'documents') <> 1 then raise exception 'FAIL: public passport should list exactly one public document'; end if;
+  select array_agg(key order by key) into keys from jsonb_object_keys(p->'documents'->0) key;
+  if keys is distinct from array['id','name','type'] then raise exception 'FAIL: public document whitelist differs: %', keys; end if;
+  if p->'documents'->0->>'id' <> '99999999-9999-4999-8999-999999999991' then raise exception 'FAIL: incorrect public document'; end if;
+  if p::text like '%PRIVATE_DOC_NAME_MARKER%' or p::text like '%Bravo public manual%' or p::text like '%storage_path%' or p::text like '%file_url%' then
+    raise exception 'FAIL: private or foreign document data leaked'; end if;
+  update public.documents set visibility = 'Private' where id = '99999999-9999-4999-8999-999999999991';
+  p := public.get_public_unitpass('cccccccc-cccc-4ccc-8ccc-ccccccccccc1');
+  if jsonb_array_length(p->'documents') <> 0 then raise exception 'FAIL: newly private document remains public'; end if;
+  update public.documents set visibility = 'Public' where id = '99999999-9999-4999-8999-999999999991';
+  p := public.get_public_unitpass('cccccccc-cccc-4ccc-8ccc-ccccccccccc2');
+  if p->'equipment'->>'status' <> 'Replaced' or jsonb_array_length(p->'documents') <> 1 then
+    raise exception 'FAIL: replaced passport historical document behaviour regressed'; end if;
+  raise notice 'PASS: 5.5 public document whitelist, private-name absence, immediate revocation and replaced history';
+end $$;
+
+do $$ declare n integer; rejected boolean := false; v_path text; begin
+  select count(*) into n from storage.objects where bucket_id = 'documents';
+  if n <> 3 then raise exception 'FAIL: A should see only 3 own storage objects, got %', n; end if;
+  v_path := 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/66666666-6666-4666-8666-666666666661/99999999-9999-4999-8999-999999999993-manual.pdf';
+  if exists (select 1 from storage.objects where bucket_id = 'documents' and name = v_path) then raise exception 'FAIL: A sees B stored file'; end if;
+  update storage.objects set metadata = '{}'::jsonb where bucket_id = 'documents' and name = v_path;
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'FAIL: A changed B storage object'; end if;
+  delete from storage.objects where bucket_id = 'documents' and name = v_path;
+  get diagnostics n = row_count;
+  if n <> 0 then raise exception 'FAIL: A deleted B storage object'; end if;
+  begin insert into storage.objects (bucket_id, name) values ('documents', replace(v_path, 'manual.pdf', 'forged.pdf'));
+  exception when insufficient_privilege then rejected := true; end;
+  if not rejected then raise exception 'FAIL: A uploaded into B prefix'; end if;
+  raise notice 'PASS: 5.6 storage select/insert/update/delete isolated despite stale profiles.company_id';
+end $$;
+
+do $$ declare p text; rejected boolean; v_id uuid; n integer; begin
+  foreach p in array array[
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/66666666-6666-4666-8666-666666666661/99999999-9999-4999-8999-999999999995-test.pdf',
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/55555555-5555-4555-8555-555555555551/../test.pdf',
+    'invalid/55555555-5555-4555-8555-555555555551/99999999-9999-4999-8999-999999999995-test.pdf'
+  ] loop
+    rejected := false;
+    begin insert into storage.objects(bucket_id, name) values ('documents', p);
+    exception when insufficient_privilege then rejected := true; end;
+    if not rejected then raise exception 'FAIL: malformed/cross-equipment storage path accepted: %', p; end if;
+  end loop;
+  p := 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/55555555-5555-4555-8555-555555555551/99999999-9999-4999-8999-999999999995-own.pdf';
+  insert into storage.objects(bucket_id, name) values ('documents', p) returning id into v_id;
+  update storage.objects set metadata = '{"test":true}'::jsonb where id = v_id;
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'FAIL: A cannot update own stored object'; end if;
+  rejected := false;
+  begin update storage.objects set name = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/66666666-6666-4666-8666-666666666661/99999999-9999-4999-8999-999999999995-own.pdf' where id = v_id;
+  exception when insufficient_privilege then rejected := true; end;
+  if not rejected then raise exception 'FAIL: stored object moved across tenants'; end if;
+  delete from storage.objects where id = v_id;
+  get diagnostics n = row_count;
+  if n <> 1 then raise exception 'FAIL: A cannot delete own stored object'; end if;
+  raise notice 'PASS: 5.7 own storage writes work; forged paths and cross-tenant moves fail';
+end $$;
+
+reset role;
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"22222222-2222-4222-8222-222222222222","role":"authenticated"}';
+do $$ begin
+  if (select count(*) from public.documents) <> 1 or (select count(*) from storage.objects where bucket_id = 'documents') <> 1 then
+    raise exception 'FAIL: B sees foreign documents or stored objects'; end if;
+  raise notice 'PASS: 5.8 reverse tenant isolation at row and storage level';
+end $$;
+
+reset role;
+set local role anon;
+set local request.jwt.claims = '{"role":"anon"}';
+do $$ declare rejected boolean := false; n integer; begin
+  if has_table_privilege('anon', 'public.documents', 'select,insert,update,delete') then raise exception 'FAIL: anon has document table privileges'; end if;
+  begin perform 1 from public.documents; exception when insufficient_privilege then rejected := true; end;
+  if not rejected then raise exception 'FAIL: anon can query documents directly'; end if;
+  begin
+    select count(*) into n from storage.objects where bucket_id = 'documents';
+    if n <> 0 then raise exception 'FAIL: anon can list documents storage'; end if;
+  exception when insufficient_privilege then null; end;
+  rejected := false;
+  begin insert into storage.objects(bucket_id, name) values ('documents', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/55555555-5555-4555-8555-555555555551/99999999-9999-4999-8999-999999999995-anon.pdf');
+  exception when insufficient_privilege then rejected := true; end;
+  if not rejected then raise exception 'FAIL: anon can insert storage objects'; end if;
+  if public.get_public_unitpass('cccccccc-cccc-4ccc-8ccc-ccccccccccc1')::text like '%PRIVATE_DOC_NAME_MARKER%' then
+    raise exception 'FAIL: anonymous RPC includes private document name'; end if;
+  raise notice 'PASS: 5.9 anon has no document table access, bucket listing or writes; public RPC excludes private name';
+end $$;
+reset role;
+do $$ begin
+  if not exists (select 1 from storage.buckets where id = 'documents' and public = false and file_size_limit = 15728640
+    and allowed_mime_types @> array['application/pdf','image/jpeg','image/png','image/webp']
+    and cardinality(allowed_mime_types) = 4) then raise exception 'FAIL: documents bucket configuration is unsafe'; end if;
+  if not (select relrowsecurity from pg_class where oid = 'storage.objects'::regclass) then raise exception 'FAIL: storage.objects RLS disabled'; end if;
+  if exists (select 1 from pg_policies where schemaname = 'storage' and tablename = 'objects' and policyname like 'documents_%'
+    and roles is distinct from array['authenticated']::name[]) then raise exception 'FAIL: document storage policy targets anonymous/public roles'; end if;
+  raise notice 'PASS: 5.10 private bucket, 15 MB limit, exact MIME allowlist, authenticated-only policies, storage RLS';
+end $$;
+
 reset role;
 
 do $$
 begin
-  raise notice 'ALL CHECKS PASSED (Phase 1 + Phase 2 + Phase 3 + Phase 4 tenant isolation)';
+  raise notice 'ALL CHECKS PASSED (Phase 1 + Phase 2 + Phase 3 + Phase 4 + Phase 5 tenant isolation)';
 end
 $$;
 

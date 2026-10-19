@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import { Suspense } from 'react';
+import { DocumentsSection } from './documents-section';
 import { notFound } from 'next/navigation';
 import { z } from 'zod';
 import { ArrowLeft, CalendarClock, ExternalLink, QrCode } from 'lucide-react';
@@ -307,6 +309,10 @@ export default async function EquipmentDetailPage({ params }: { params: { id: st
           ) : null}
         </CardContent>
       </Card>
+
+      <Suspense fallback={<div className="h-48 animate-pulse rounded-lg bg-muted" role="status" aria-label="Loading documents" />}>
+        <DocumentsSection equipmentId={item.id} equipmentName={item.equipment_name} companyId={companyId} />
+      </Suspense>
 
       <Card>
         <CardHeader>

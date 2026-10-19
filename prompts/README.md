@@ -671,6 +671,15 @@ phase's acceptance criteria, and say "deferred to Phase N" instead of building i
 | 2026-10-19 | 4 | All next-service math lives in `src/lib/services/next-service-date.ts` (date-fns `addMonths`); Mark Serviced is one server action that logs the visit and rolls the schedule | Phase 6 reminders and the dashboard must agree; month-end clamps are asserted by `pnpm verify:dates` |
 | 2026-10-19 | 4 | Public service history is capped at 20 and whitelists `service_date` / `service_type` / `technician_name` / `public_notes`; the client parser adds a key allow-list and fails closed | printed QR pages must never expose `private_notes`, and a SQL regression must not leak even if it reaches the page |
 
+| 2026-10-19 | 5 | One private `documents` bucket; member-client dashboard writes/signing, server-only admin signing only after public document/token/tenant/path validation; 300-second links and uncached lookups | protects private files without permanent public URLs; matches replaced passport history behaviour |
+| 2026-10-19 | 5 | Immutable file/equipment metadata and canonical tenant/equipment/UUID paths; Storage authorization reads `company_members` and checks all three current write roles, never `profiles.company_id` | prevents path substitution during service-role signing and stale profile authorization |
+| 2026-10-19 | 5 | Preserve deprecated `file_url` and quarantine legacy rows with missing private metadata; enforce a NOT VALID metadata check for new/updated rows; stop on orphan equipment | cannot safely invent private paths or migrate arbitrary remote files; never delete legacy customer data |
+| 2026-10-19 | 5 | Server Action body limit 16 MB, application/bucket file limit 15 MB; hosting must support that payload (Vercel's 4.5 MB limit needs a future direct-upload design if full-size uploads are required) | follows the phase's Server Action upload requirement without pretending framework configuration changes platform limits |
+
+| 2026-10-19 | 5 follow-up | Replace the failed Storage table ALTER with a read-only, fail-closed RLS precondition; preserve all policies | hosted Supabase delegates policy management to `postgres` without granting ownership of `storage.objects`; never alter the managed table or bypass RLS to fix SQLSTATE 42501 |
+
+| 2026-10-19 | 5 follow-up | Check prior-phase database tables/functions at the start of Phase 5; name the missing Phase 4 migration instead of failing deep inside the RPC | merged source does not imply migrations were applied to the target project; keep service history/RLS intact and stop before making Phase 5 changes |
+
 Future phases: add a row per decision that changes architecture, dependencies, schema, or security posture.
 
 ---
