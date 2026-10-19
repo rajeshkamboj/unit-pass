@@ -661,6 +661,12 @@ phase's acceptance criteria, and say "deferred to Phase N" instead of building i
 | 2026-10-07 | 1 | Added `supabase/tests/local/postgres_shim.sql` so the RLS suite can run on a plain Postgres without Supabase credentials | makes the security tests reproducible offline; the canonical path stays `psql "$SUPABASE_DB_URL"` |
 | 2026-10-07 | 1 | Unused shadcn components kept; unused deps left for Phase 8 | cost control: no rewrites/removals without evidence of benefit |
 | 2026-10-06 | 2 | Company logo upload deferred to Phase 5; customers use `archived_at` soft archive and search escapes literal ILIKE wildcards | Preserves customer records, keeps storage out of this phase, and makes search terms literal while RLS scopes every query |
+| 2026-10-19 | 3 | `equipment.public_token` is `NOT NULL DEFAULT gen_random_uuid()` and immutable via a `before update` trigger; no future code path (or SQL console) can invalidate a printed QR | printed labels are the product's physical anchor; a mutable token would silently break every label |
+| 2026-10-19 | 3 | Equipment has **no** delete privilege or delete policy; retirement is `status = 'Replaced'` (QR keeps resolving) | matches the spec's permanence rule and makes the "no hard delete" UI real at the database layer |
+| 2026-10-19 | 3 | Anonymous access is exactly one `SECURITY DEFINER` RPC (`get_public_unitpass`); `anon` holds zero table privileges and the passport page never selects from `equipment` | whitelist-in-SQL instead of field-hiding in React; enforced and tested in `rls_tenant_isolation.sql` §3 |
+| 2026-10-19 | 3 | A trigger rejects equipment whose `customer_id` belongs to another company (in addition to RLS on `company_id`) | blocks the "own company + foreign customer" pairing that RLS alone cannot express |
+| 2026-10-19 | 3 | QR generation uses `qrcode` (client, error correction M, 1024 px) with the payload built only in `src/lib/public/unitpass-url.ts`; the QR page warns when `NEXT_PUBLIC_SITE_URL` is unset | one source of truth for the URL and an explicit guard against printing localhost QR codes |
+| 2026-10-19 | 3 | Equipment photos deferred: `equipment_photo_path` column exists for the future signed-URL flow, legacy `equipment_photo_url` kept but unused (deprecated); no `SUPABASE_SERVICE_ROLE_KEY` needed yet | avoids storage/admin-client scope creep in this phase while keeping the public payload contract stable |
 
 Future phases: add a row per decision that changes architecture, dependencies, schema, or security posture.
 

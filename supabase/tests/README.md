@@ -5,7 +5,7 @@ Security is a **database** behaviour, so it is tested in the database, not with 
 
 | File | Purpose |
 |---|---|
-| `rls_tenant_isolation.sql` | Proves tenant isolation. Phase 1 covers `companies`, `profiles`, `company_members`, the company-creation RPC, and anonymous access. Phase 2 covers customer select/insert/update/archive isolation and tenant-scoped search. Later phases append their own `SECTION N` blocks. |
+| `rls_tenant_isolation.sql` | Proves tenant isolation. Phase 1 covers `companies`, `profiles`, `company_members`, the company-creation RPC, and anonymous access. Phase 2 covers customer select/insert/update/archive isolation and tenant-scoped search. Phase 3 covers equipment isolation, forged `company_id`/`customer_id` inserts, `public_token` immutability, the anonymous table lockout, and the `get_public_unitpass()` whitelist (no ids, no installer notes, no customer PII; unknown tokens return null). Later phases append their own `SECTION N` blocks. |
 | `check_rls_enabled.sql` | Fails if any table in `public` is missing RLS, then prints the table/policy inventory. |
 | `local/postgres_shim.sql` | Optional shim that emulates the few Supabase-specific objects (`auth.users`, `auth.uid()`, `anon`/`authenticated` roles) so the two scripts above can run on a plain, disposable PostgreSQL instance. |
 
@@ -19,9 +19,9 @@ psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/check_rls_enabled.s
 
 What success looks like:
 
-* `rls_tenant_isolation.sql` prints the Phase 1 checks, `PASS: 2.1 …` through `PASS: 2.8 …`, then
-  `ALL CHECKS PASSED (Phase 1 + Phase 2 tenant isolation)`, and finishes with `ROLLBACK`. Any violated assertion
-  raises an exception, psql exits non-zero, and the transaction is rolled back.
+* `rls_tenant_isolation.sql` prints the Phase 1 checks, `PASS: 2.1 …` through `PASS: 2.8 …`, `PASS: 3.1 …` through
+  `PASS: 3.9 …`, then `ALL CHECKS PASSED (Phase 1 + Phase 2 + Phase 3 tenant isolation)`, and finishes with
+  `ROLLBACK`. Any violated assertion raises an exception, psql exits non-zero, and the transaction is rolled back.
 * `check_rls_enabled.sql` prints `PASS: RLS is enabled on every table in the public schema` plus the
   inventory tables.
 
@@ -39,6 +39,7 @@ createdb unitpass_local
 psql -d unitpass_local -v ON_ERROR_STOP=1 -f supabase/tests/local/postgres_shim.sql
 psql -d unitpass_local -v ON_ERROR_STOP=1 -f supabase/migrations/20261007000001_phase1_foundation.sql
 psql -d unitpass_local -v ON_ERROR_STOP=1 -f supabase/migrations/20261015000001_phase2_customers.sql
+psql -d unitpass_local -v ON_ERROR_STOP=1 -f supabase/migrations/20261022000001_phase3_equipment.sql
 psql -d unitpass_local -v ON_ERROR_STOP=1 -f supabase/tests/rls_tenant_isolation.sql
 psql -d unitpass_local -v ON_ERROR_STOP=1 -f supabase/tests/check_rls_enabled.sql
 ```

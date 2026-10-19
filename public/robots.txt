@@ -1,14 +1,21 @@
+# Public equipment passports are reachable only by scanning a physical QR code.
+# They must never be indexed by search engines.
+User-agent: *
+Disallow: /p/
+Allow: /
+
 User-agent: Googlebot
+Disallow: /p/
 Allow: /
 
 User-agent: Bingbot
+Disallow: /p/
 Allow: /
 
 User-agent: Twitterbot
+Disallow: /p/
 Allow: /
 
 User-agent: facebookexternalhit
-Allow: /
-
-User-agent: *
+Disallow: /p/
 Allow: /

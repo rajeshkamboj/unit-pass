@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutDashboard, LogOut, Menu, Settings, Users, X } from 'lucide-react';
+import { LayoutDashboard, LogOut, Menu, Settings, Users, Wrench, X } from 'lucide-react';
 import { signOut } from '@/app/auth/actions';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -11,12 +11,14 @@ import { cn } from '@/lib/utils';
 /**
  * Navigation for the dashboard shell.
  *
- * Only functionality that actually exists is listed (Phase 2: Dashboard,
- * Customers, and company Settings). Later phases add their entries with each feature.
+ * Only functionality that actually exists is listed (Phase 3: Dashboard,
+ * Customers, Equipment and company Settings). Later phases add their entries
+ * with each feature.
  */
 const NAV_ITEMS = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/dashboard/customers', label: 'Customers', icon: Users },
+  { href: '/dashboard/equipment', label: 'Equipment', icon: Wrench },
   { href: '/dashboard/settings', label: 'Settings', icon: Settings },
 ] as const;
 
@@ -53,7 +55,7 @@ export function Sidebar({ companyName, userEmail }: { companyName: string | null
   return (
     <>
       {/* Mobile top bar */}
-      <header className="flex items-center justify-between border-b bg-background px-4 py-3 md:hidden">
+      <header className="flex items-center justify-between border-b bg-background px-4 py-3 md:hidden print:hidden">
         <div className="flex min-w-0 items-center gap-2">
           <span className="text-base font-semibold tracking-tight">UnitPass</span>
           {companyName ? (
@@ -73,7 +75,7 @@ export function Sidebar({ companyName, userEmail }: { companyName: string | null
       </header>
 
       {mobileOpen ? (
-        <div id="mobile-nav" className="border-b bg-background px-4 py-3 md:hidden">
+        <div id="mobile-nav" className="border-b bg-background px-4 py-3 md:hidden print:hidden">
           {/* Close control keeps the overlay usable with one thumb */}
           <div className="mb-2 flex justify-end">
             <Button variant="ghost" size="sm" className="h-10" onClick={() => setMobileOpen(false)}>
@@ -86,7 +88,7 @@ export function Sidebar({ companyName, userEmail }: { companyName: string | null
       ) : null}
 
       {/* Desktop sidebar */}
-      <aside className="hidden w-64 shrink-0 flex-col border-r bg-background p-4 md:flex">
+      <aside className="hidden w-64 shrink-0 flex-col border-r bg-background p-4 md:flex print:hidden">
         <Link href="/dashboard" className="mb-6 flex items-center gap-2" aria-label="UnitPass dashboard">
           <svg
             xmlns="http://www.w3.org/2000/svg"

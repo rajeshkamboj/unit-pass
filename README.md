@@ -7,9 +7,10 @@ open a mobile-friendly digital passport (equipment details, warranty, service hi
 **Book Service** action), while the company is reminded when the unit is due for maintenance — turning installations
 into repeat service revenue.
 
-> **Where the project is today:** Phases 1–2 are implemented: foundation, authentication, multi-tenancy, company
-> profiles, and customer management. Equipment, QR codes, public passports, service history, documents, reminders,
-> and billing arrive in Phases 3–8. See [`prompts/README.md`](prompts/README.md) for the phase plan and agent rules.
+> **Where the project is today:** Phases 1–3 are implemented: foundation, authentication, multi-tenancy, company
+> profiles, customer management, **equipment records, permanent QR codes and the public UnitPass passport**. Service
+> history, documents, reminders and billing arrive in Phases 4–8. See [`prompts/README.md`](prompts/README.md) for
+> the phase plan and agent rules.
 
 ---
 
@@ -34,14 +35,20 @@ src/
     auth/                  # sign-in, sign-up, forgot/reset password, check-email, callback route
     dashboard/             # protected shell (server-side session check)
       customers/           # tenant-scoped customer list, create, detail, edit, archive
+      equipment/           # equipment list, create, detail, edit, QR label page
       settings/            # company profile and service booking settings
+    p/[token]/             # PUBLIC UnitPass (no auth, noindex, RPC-backed)
   components/
     ui/                    # shadcn/ui primitives
     Sidebar.tsx            # dashboard navigation (mobile-aware)
   lib/
     supabase/              # client.ts (browser) · server.ts (server) · middleware.ts
     session.ts             # requireUser() / getUserMembership() / requireCompany()
-    types.ts               # hand-written row types for the Phase 1 tables
+    types.ts               # hand-written row types (companies, customers, equipment, public payload)
+    equipment.ts           # date/warranty/service formatting shared by dashboard + public page
+    equipment-search.ts    # PostgREST filter for the equipment search box
+    validation/            # zod schemas for server actions (company, customer, equipment)
+    public/                # unitpass-url.ts (QR payload) + get-unitpass.ts (RPC reader)
     utils.ts               # cn()
   globals.css              # Tailwind entry + design tokens
 middleware.ts              # session refresh + /dashboard guard
@@ -87,7 +94,7 @@ pnpm lint         # ESLint (next lint), must be clean
 pnpm build        # production build
 ```
 
-Database security tests (see [`supabase/tests/README.md`](supabase/tests/README.md)):
+Database security tests (see [`supabase/tests/README.md`](supabase/tests/README.md)) — Phases 1–3:
 
 ```bash
 psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/rls_tenant_isolation.sql
@@ -107,11 +114,14 @@ psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/check_rls_enabled.s
    ```bash
    psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20261007000001_phase1_foundation.sql
    psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20261015000001_phase2_customers.sql
+   psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20261022000001_phase3_equipment.sql
    ```
 
-   Or paste each file into the Supabase SQL editor in the same order. Both migrations are idempotent. Phase 1 also
+   Or paste each file into the Supabase SQL editor in the same order. All migrations are idempotent. Phase 1 also
    repairs a database where the legacy `supabase/legacy/schema.sql.txt` was applied earlier; Phase 2 adds the customer
-   archive field, tenant policies, and company service booking URL without deleting existing data.
+   archive field, tenant policies, and company service booking URL without deleting existing data; Phase 3 creates the
+   equipment table, backfills a permanent `public_token` for existing rows, and installs the public RPC without
+   deleting anything.
 4. **Verify the security guarantees** by running the two scripts in `supabase/tests/` (section 2).
 5. **Auth URLs** — in *Authentication → URL Configuration*:
    * *Site URL*: `http://localhost:3000` for dev, your production domain later.
@@ -121,7 +131,7 @@ psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/check_rls_enabled.s
    testing you may turn it off; the app handles both (it detects an immediate session after sign-up and goes straight
    to the dashboard).
 
-### What the database guarantees (Phases 1–2)
+### What the database guarantees (Phases 1–3)
 
 | Table | Contents | Access |
 |---|---|---|
@@ -129,8 +139,15 @@ psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/check_rls_enabled.s
 | `profiles` | 1:1 with `auth.users` (auto-created by a trigger) | a user reads/updates only their own row |
 | `company_members` | user ↔ company + role (`owner`/`admin`/`technician`) | members read their company's members; admins manage them |
 | `customers` | company-owned contact records with `archived_at` soft archive | members read/insert/update only their company; hard-delete policy is reserved for a future explicit purge, and the app never hard-deletes |
+| `equipment` | company-owned installed units, service dates, public/private notes, and a permanent `public_token` | members read/insert/update only their company; **no delete privilege or policy** — units are retired with `status = 'Replaced'` so printed QR codes keep working |
 
-* RLS is enabled on all four tables; `anon` has **no** privileges on them.
+* RLS is enabled on all five tables; `anon` has **no** privileges on them.
+* `equipment.public_token` is generated by the database (`gen_random_uuid()`), is unique, and an immutability trigger
+  rejects any attempt to change it. A trigger also refuses an equipment row whose `customer_id` belongs to another
+  company.
+* The **only** anonymous database access is `public.get_public_unitpass(uuid)`, a `SECURITY DEFINER` function that
+  returns an explicit whitelist (company contact + equipment identity, warranty, public notes and status). It never
+  returns internal ids, `installer_notes`, or customer PII, and returns `NULL` for unknown tokens.
 * `public.is_company_member()` / `public.is_company_admin()` are `SECURITY DEFINER` helpers used by the policies —
   this is what prevents the "infinite recursion detected in policy" failure of the legacy schema.
 * `company_members` is the source of truth for tenancy; `profiles.company_id` is only a convenience pointer.
@@ -141,7 +158,7 @@ psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/check_rls_enabled.s
 
 | Variable | Scope | Purpose |
 |---|---|---|
-| `NEXT_PUBLIC_SITE_URL` | public | Canonical origin used for auth redirects and (later) QR payloads. Set it to your real domain **before** printing QR labels. |
+| `NEXT_PUBLIC_SITE_URL` | public | Canonical origin used for auth redirects **and QR payloads** (`${NEXT_PUBLIC_SITE_URL}/p/<token>`). Set it to the real production domain **before** printing any labels. |
 | `NEXT_PUBLIC_SUPABASE_URL` | public | Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | public | Supabase anonymous key (RLS-protected) |
 | `SUPABASE_DB_URL` | dev/CI only | Postgres connection string for migration and test scripts |
@@ -154,6 +171,19 @@ the production build itself does not require credentials.
 `vercel.json` is required in Phase 1.
 
 ---
+
+### Public UnitPass and QR codes (Phase 3)
+
+* `/p/<token>` is public, mobile-first, server-rendered (`force-dynamic`), marked `noindex, nofollow`, and ships no
+  authentication. It reads **only** through `get_public_unitpass()` — never `select *` from `equipment`.
+* `/dashboard/equipment/<id>/qr` renders the QR (error correction level M, 1024 px PNG), a **Download PNG** button, a
+  **Copy public link** button and a print-only label. The dashboard equipment detail page also shows the public link.
+* The QR payload is built in one place: `src/lib/public/unitpass-url.ts` → `${NEXT_PUBLIC_SITE_URL}/p/<token>`.
+  **Set `NEXT_PUBLIC_SITE_URL` to the production origin before printing labels.** Changing it later does not fix
+  QR codes that are already printed — always print from the production deployment.
+* Every status keeps the passport reachable: `Active` shows the normal passport, `Inactive` adds a
+  "not currently in service" notice, `Replaced` adds a replacement notice plus company contact details. Unknown or
+  malformed tokens render a generic 404.
 
 ## 5. Phase workflow (for the owner and for AI agents)
 

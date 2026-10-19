@@ -8,9 +8,9 @@
 -- Run:
 --   psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/rls_tenant_isolation.sql
 --
--- Expected result: Phase 1 and Phase 2 "PASS: ..." notices and a final
--- "ALL CHECKS PASSED (Phase 1 + Phase 2 tenant isolation)" notice, ending with
--- ROLLBACK. Any failed assertion raises an exception -> non-zero exit code.
+-- Expected result: Phase 1, Phase 2 and Phase 3 "PASS: ..." notices and a final
+-- "ALL CHECKS PASSED (Phase 1 + Phase 2 + Phase 3 tenant isolation)" notice,
+-- ending with ROLLBACK. Any failed assertion raises an exception -> non-zero exit.
 --
 -- Fixtures (deterministic ids so assertions can reference them as literals):
 --   user A    11111111-1111-4111-8111-111111111111
@@ -72,6 +72,46 @@ values
     '44444444-4444-4444-8444-444444444442',
     'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
     'Archived', 'Miller', 'archived.miller@bravo.test', '555-2002', 'Dayton', 'OH', now()
+  )
+on conflict (id) do nothing;
+
+-- Phase 3 fixtures: equipment for both tenants. The public tokens are
+-- deterministic so the assertions can call the public RPC with literals.
+-- `installer_notes` carries a unique marker that must never reach the public
+-- payload, and the A unit belongs to the customer with distinctive PII.
+insert into public.equipment (
+  id, company_id, customer_id, equipment_name, equipment_type, manufacturer,
+  model_number, serial_number, installation_date, warranty_expiration_date,
+  warranty_notes, next_service_date, service_interval, installer_notes,
+  public_notes, status, public_token
+)
+values
+  (
+    '55555555-5555-4555-8555-555555555551',
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    '33333333-3333-4333-8333-333333333331',
+    'Downstairs AC', 'Air Conditioner', 'Carrier', '24ACC636', 'SN-ALPHA-001',
+    '2024-05-01', '2029-05-01', '10-year parts warranty', '2026-11-01', 12,
+    'PRIVATE_MARKER_12345', 'Alpha public note', 'Active',
+    'cccccccc-cccc-4ccc-8ccc-ccccccccccc1'
+  ),
+  (
+    '55555555-5555-4555-8555-555555555552',
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    '33333333-3333-4333-8333-333333333332',
+    'Retired Furnace', 'Furnace', 'Trane', 'XR80', 'SN-ALPHA-002',
+    '2012-01-15', '2017-01-15', 'Warranty expired', null, null,
+    'PRIVATE_MARKER_12345', 'Retired unit note', 'Replaced',
+    'cccccccc-cccc-4ccc-8ccc-ccccccccccc2'
+  ),
+  (
+    '66666666-6666-4666-8666-666666666661',
+    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    '44444444-4444-4444-8444-444444444441',
+    'Bravo Boiler', 'Boiler', 'Viessmann', 'V100', 'SN-BRAVO-001',
+    '2021-09-01', '2031-09-01', 'Bravo warranty', '2027-03-01', 24,
+    'BRAVO_PRIVATE_MARKER', 'Bravo public note', 'Active',
+    'dddddddd-dddd-4ddd-8ddd-ddddddddddd1'
   )
 on conflict (id) do nothing;
 
@@ -507,11 +547,312 @@ begin
 end
 $$;
 
+-- =============================================================================
+-- SECTION 3 — PHASE 3: equipment, public tokens, public UnitPass RPC
+-- =============================================================================
+reset role;
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated"}';
+
+-- 3.1 Company A sees its own equipment only.
+do $$
+declare
+  v_own integer;
+  v_foreign integer;
+begin
+  select count(*) into v_own
+    from public.equipment
+    where id in (
+      '55555555-5555-4555-8555-555555555551',
+      '55555555-5555-4555-8555-555555555552'
+    );
+  if v_own <> 2 then
+    raise exception 'FAIL: A sees % of its 2 equipment rows', v_own;
+  end if;
+
+  select count(*) into v_foreign
+    from public.equipment
+    where company_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  if v_foreign <> 0 then
+    raise exception 'FAIL: A can select Company B equipment (rows=%)', v_foreign;
+  end if;
+  raise notice 'PASS: 3.1 A can select only its own equipment rows';
+end
+$$;
+
+-- 3.2 Forged cross-tenant updates and status changes affect no rows.
+do $$
+declare
+  v_updated integer;
+begin
+  update public.equipment
+    set equipment_name = 'Hijacked', status = 'Replaced'
+    where id = '66666666-6666-4666-8666-666666666661';
+  get diagnostics v_updated = row_count;
+  if v_updated <> 0 then
+    raise exception 'FAIL: A updated Company B equipment (rows=%)', v_updated;
+  end if;
+
+  update public.equipment
+    set manufacturer = 'Carrier Edited'
+    where id = '55555555-5555-4555-8555-555555555551';
+  get diagnostics v_updated = row_count;
+  if v_updated <> 1 then
+    raise exception 'FAIL: A could not update its own equipment (rows=%)', v_updated;
+  end if;
+  raise notice 'PASS: 3.2 A cannot modify B equipment, and can edit its own';
+end
+$$;
+
+-- 3.3 Forging company_id on insert is rejected by RLS.
+do $$
+declare
+  v_rejected boolean := false;
+begin
+  begin
+    insert into public.equipment (
+      company_id, customer_id, equipment_name, equipment_type, status
+    )
+    values (
+      'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      '44444444-4444-4444-8444-444444444441',
+      'Forged Unit', 'Other', 'Active'
+    );
+  exception
+    when others then
+      v_rejected := true;
+  end;
+
+  if not v_rejected then
+    raise exception 'FAIL: A inserted equipment with Company B company_id';
+  end if;
+  raise notice 'PASS: 3.3 equipment insert with Company B company_id is rejected';
+end
+$$;
+
+-- 3.4 Pairing the caller's company with another tenant's customer is rejected
+--     by the equipment_customer_same_company trigger (defence in depth).
+do $$
+declare
+  v_rejected boolean := false;
+begin
+  begin
+    insert into public.equipment (
+      company_id, customer_id, equipment_name, equipment_type, status
+    )
+    values (
+      'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      '44444444-4444-4444-8444-444444444441',
+      'Cross Tenant Unit', 'Other', 'Active'
+    );
+  exception
+    when others then
+      v_rejected := true;
+  end;
+
+  if not v_rejected then
+    raise exception 'FAIL: A inserted equipment for Company B customer';
+  end if;
+  raise notice 'PASS: 3.4 equipment insert with Company B customer_id is rejected';
+end
+$$;
+
+-- 3.5 The public token is immutable: a normal edit keeps it, changing it fails.
+do $$
+declare
+  v_before uuid;
+  v_after uuid;
+  v_blocked boolean := false;
+begin
+  select public_token into v_before
+    from public.equipment
+    where id = '55555555-5555-4555-8555-555555555551';
+
+  update public.equipment
+    set model_number = '24ACC636-B', warranty_notes = 'Edited warranty note'
+    where id = '55555555-5555-4555-8555-555555555551';
+
+  select public_token into v_after
+    from public.equipment
+    where id = '55555555-5555-4555-8555-555555555551';
+
+  if v_before is distinct from v_after then
+    raise exception 'FAIL: editing equipment changed public_token (% -> %)', v_before, v_after;
+  end if;
+  if v_before is distinct from 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1' then
+    raise exception 'FAIL: public_token changed to an unexpected value (%)', v_before;
+  end if;
+
+  begin
+    update public.equipment
+      set public_token = gen_random_uuid()
+      where id = '55555555-5555-4555-8555-555555555551';
+  exception
+    when others then
+      v_blocked := true;
+  end;
+
+  if not v_blocked then
+    raise exception 'FAIL: public_token could be changed';
+  end if;
+  raise notice 'PASS: 3.5 public_token survives edits and cannot be changed';
+end
+$$;
+
+-- 3.6 Anonymous visitors have no table privileges on equipment.
+reset role;
+set local role anon;
+
+do $$
+declare
+  v_blocked integer := 0;
+begin
+  begin
+    perform 1 from public.equipment limit 1;
+  exception when others then
+    v_blocked := v_blocked + 1;
+  end;
+
+  begin
+    update public.equipment set public_notes = 'anon' where public_token = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1';
+    -- Even if the statement "succeeds" with zero rows, the privilege check above
+    -- is what we assert below via has_table_privilege.
+  exception when others then
+    v_blocked := v_blocked + 1;
+  end;
+
+  if v_blocked < 1 then
+    raise exception 'FAIL: anonymous role could read equipment';
+  end if;
+
+  if has_table_privilege('anon', 'public.equipment', 'select') then
+    raise exception 'FAIL: anon still holds SELECT on public.equipment';
+  end if;
+  if has_table_privilege('anon', 'public.equipment', 'insert')
+     or has_table_privilege('anon', 'public.equipment', 'update')
+     or has_table_privilege('anon', 'public.equipment', 'delete') then
+    raise exception 'FAIL: anon still holds write privileges on public.equipment';
+  end if;
+  raise notice 'PASS: 3.6 anon has no privileges on public.equipment';
+end
+$$;
+
+-- 3.7 The public RPC returns only the approved whitelist for A's token.
+do $$
+declare
+  v_payload jsonb;
+  v_text text;
+begin
+  v_payload := public.get_public_unitpass('cccccccc-cccc-4ccc-8ccc-ccccccccccc1');
+
+  if v_payload is null then
+    raise exception 'FAIL: get_public_unitpass returned no payload for a real token';
+  end if;
+
+  if v_payload -> 'equipment' ->> 'name' is distinct from 'Downstairs AC' then
+    raise exception 'FAIL: public payload has the wrong equipment name (%)',
+      v_payload -> 'equipment' ->> 'name';
+  end if;
+  if v_payload -> 'company' ->> 'name' is distinct from 'Alpha HVAC' then
+    raise exception 'FAIL: public payload has the wrong company name (%)',
+      v_payload -> 'company' ->> 'name';
+  end if;
+  if v_payload -> 'equipment' ->> 'warranty_notes' is distinct from 'Edited warranty note' then
+    raise exception 'FAIL: public payload is missing warranty notes';
+  end if;
+
+  -- Private field must be absent, not merely empty.
+  if (v_payload -> 'equipment') ? 'installer_notes' then
+    raise exception 'FAIL: installer_notes is present in the public payload';
+  end if;
+
+  -- No internal identifiers anywhere in the payload.
+  v_text := v_payload::text;
+  if v_text like '%"id":%'
+     or v_text like '%"company_id":%'
+     or v_text like '%"customer_id":%'
+     or v_text like '%"equipment_id":%'
+     or v_text like '%"public_token":%' then
+    raise exception 'FAIL: the public payload contains an internal identifier: %', v_text;
+  end if;
+  if v_text like '%55555555-5555-4555-8555-555555555551%'
+     or v_text like '%33333333-3333-4333-8333-333333333331%'
+     or v_text like '%aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa%' then
+    raise exception 'FAIL: the public payload contains an internal UUID: %', v_text;
+  end if;
+
+  -- Seeded private marker and customer PII must be absent.
+  if v_text like '%PRIVATE_MARKER_12345%' then
+    raise exception 'FAIL: installer_notes marker leaked into the public payload';
+  end if;
+  if v_text like '%Casey%'
+     or v_text like '%Miller%'
+     or v_text like '%casey.miller@alpha.test%'
+     or v_text like '%555-1001%'
+     or v_text like '%Springfield%' then
+    raise exception 'FAIL: customer PII leaked into the public payload: %', v_text;
+  end if;
+
+  -- Public notes are allowed and expected.
+  if v_text not like '%Alpha public note%' then
+    raise exception 'FAIL: public_notes are missing from the public payload';
+  end if;
+
+  raise notice 'PASS: 3.7 public payload contains the whitelist only (no ids, notes or PII)';
+end
+$$;
+
+-- 3.8 Unknown tokens return no payload; replaced equipment still resolves.
+do $$
+declare
+  v_unknown jsonb;
+  v_replaced jsonb;
+begin
+  v_unknown := public.get_public_unitpass('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee');
+  if v_unknown is not null then
+    raise exception 'FAIL: an unknown token returned a payload';
+  end if;
+
+  v_replaced := public.get_public_unitpass('cccccccc-cccc-4ccc-8ccc-ccccccccccc2');
+  if v_replaced is null then
+    raise exception 'FAIL: replaced equipment no longer resolves (printed QR would break)';
+  end if;
+  if v_replaced -> 'equipment' ->> 'status' is distinct from 'Replaced' then
+    raise exception 'FAIL: replaced equipment status is %', v_replaced -> 'equipment' ->> 'status';
+  end if;
+  raise notice 'PASS: 3.8 unknown tokens return null and replaced equipment still resolves';
+end
+$$;
+
+-- 3.9 Anonymous visitors still cannot read the underlying tables.
+do $$
+declare
+  v_blocked integer := 0;
+begin
+  begin
+    perform 1 from public.customers limit 1;
+  exception when others then
+    v_blocked := v_blocked + 1;
+  end;
+
+  begin
+    perform 1 from public.companies limit 1;
+  exception when others then
+    v_blocked := v_blocked + 1;
+  end;
+
+  if v_blocked <> 2 then
+    raise exception 'FAIL: anon could read customers/companies (% of 2 blocked)', v_blocked;
+  end if;
+  raise notice 'PASS: 3.9 anon cannot read customers/companies (public access is RPC-only)';
+end
+$$;
+
 reset role;
 
 do $$
 begin
-  raise notice 'ALL CHECKS PASSED (Phase 1 + Phase 2 tenant isolation)';
+  raise notice 'ALL CHECKS PASSED (Phase 1 + Phase 2 + Phase 3 tenant isolation)';
 end
 $$;
 
