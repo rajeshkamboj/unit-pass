@@ -179,6 +179,26 @@ export default async function PublicUnitPassPage({ params }: Props) {
           </section>
         ) : null}
 
+        {pass.documents.length > 0 ? (
+          <section aria-labelledby="documents-heading" className="rounded-lg border bg-card p-5 shadow-sm sm:p-6">
+            <h2 id="documents-heading" className="text-lg font-semibold">Documents</h2>
+            <ul className="mt-3 divide-y">
+              {pass.documents.map((document) => (
+                <li key={document.id}>
+                  <a
+                    href={`/p/${params.token}/documents/${document.id}`}
+                    referrerPolicy="no-referrer"
+                    className="flex min-h-14 flex-col justify-center gap-1 break-words py-3 text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    <span className="font-semibold">{document.name}</span>
+                    <span className="text-sm text-muted-foreground">{document.type} · Download</span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+
         {equipment.public_notes ? (
           <section aria-labelledby="notes-heading" className="rounded-lg border bg-card p-5 shadow-sm sm:p-6">
             <h2 id="notes-heading" className="text-lg font-semibold">

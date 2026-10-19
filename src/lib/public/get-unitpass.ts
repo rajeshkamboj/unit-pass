@@ -2,6 +2,7 @@ import 'server-only';
 
 import { cache } from 'react';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { publicDocumentsSchema } from '@/lib/validation/document';
 import { isIsoDate } from '@/lib/services/next-service-date';
 import type { PublicUnitPass, ServiceHistoryEntry, ServiceType } from '@/lib/types';
 import { EQUIPMENT_STATUSES, EQUIPMENT_TYPES, SERVICE_TYPES } from '@/lib/types';
@@ -38,7 +39,10 @@ function getPublicClient(): SupabaseClient {
 
   publicClient = createClient(url, anonKey, {
     auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-    global: { headers: { 'X-Client-Info': 'unitpass-public-passport' } },
+    global: {
+      headers: { 'X-Client-Info': 'unitpass-public-passport' },
+      fetch: (input, init) => fetch(input, { ...init, cache: 'no-store' }),
+    },
   });
   return publicClient;
 }
@@ -57,6 +61,10 @@ const FORBIDDEN_PUBLIC_KEYS = new Set([
   'email_private',
   'archived_at',
   'public_token',
+  'storage_path',
+  'file_url',
+  'file_name',
+  'uploaded_by',
 ]);
 
 /** The only keys a public service-history entry may contain. */
@@ -157,7 +165,15 @@ export const getPublicUnitPass = cache(async (token: string): Promise<PublicUnit
   }
   if (data === null || data === undefined) return null;
 
-  const forbidden = findForbiddenKey(data);
+  // Strictly validate documents before exempting their ids from the recursive
+  // internal-id guard. No other object is allowed to carry an id.
+  const { documents: rawDocuments, ...basePayload } = data as Record<string, unknown>;
+  const documents = publicDocumentsSchema.safeParse(rawDocuments ?? []);
+  if (!documents.success) {
+    console.error('[unitpass] Public documents did not match the whitelist.');
+    throw new Error('Unable to load this UnitPass right now.');
+  }
+  const forbidden = findForbiddenKey(basePayload);
   if (forbidden) {
     // A regression in the SQL whitelist must fail closed, never leak.
     console.error(`[unitpass] Public payload contained a forbidden key: ${forbidden}`);
@@ -170,7 +186,7 @@ export const getPublicUnitPass = cache(async (token: string): Promise<PublicUnit
     throw new Error('Unable to load this UnitPass right now.');
   }
 
-  const normalized: unknown = { ...(data as Record<string, unknown>), service_history: serviceHistory };
+  const normalized: unknown = { ...basePayload, service_history: serviceHistory, documents: documents.data };
   if (!isValidPublicUnitPass(normalized)) {
     console.error('[unitpass] Public payload did not match the expected shape.');
     throw new Error('Unable to load this UnitPass right now.');

@@ -7,9 +7,11 @@ open a mobile-friendly digital passport (equipment details, warranty, service hi
 **Book Service** action), while the company is reminded when the unit is due for maintenance — turning installations
 into repeat service revenue.
 
-> **Where the project is today:** Phases 1–4 are implemented: foundation, authentication, multi-tenancy, company
+> **Where the project is today:** Phases 1–5 are implemented in code: foundation, authentication, multi-tenancy, company
 > profiles, customer management, equipment records, permanent QR codes, the public UnitPass passport, and
-> **service history + the service tracking dashboard**. Documents, reminders and billing arrive in Phases 5–8. See
+> **service history, service tracking, and secure equipment documents**. Phase 5 requires the owner to apply its
+> storage migration and verify the live public/private checks before merging/deploying (see
+> [`docs/phase5-verification.md`](docs/phase5-verification.md)). Reminders and billing arrive in Phases 6–8. See
 > [`prompts/README.md`](prompts/README.md) for the phase plan and agent rules.
 
 ---
@@ -36,27 +38,30 @@ src/
     dashboard/             # protected shell (server-side session check)
       customers/           # tenant-scoped customer list, create, detail, edit, archive
       equipment/           # equipment list, create, detail, service timeline, edit, QR label page
+      documents/           # tenant-scoped list/filters, upload, metadata edit, signed download, delete
       services/            # service tracking: 7/30/60-day + overdue lists, Mark Serviced
       settings/            # company profile and service booking settings
-    p/[token]/             # PUBLIC UnitPass (no auth, noindex, RPC-backed)
+    p/[token]/             # PUBLIC UnitPass + token-paired document download route (no auth, noindex)
   components/
     ui/                    # shadcn/ui primitives
     StatCard.tsx           # shared metric card (dashboard + services)
     Sidebar.tsx            # dashboard navigation (mobile-aware)
   lib/
-    supabase/              # client.ts (browser) · server.ts (server) · middleware.ts
+    supabase/              # client.ts (browser) · server.ts (member) · admin.ts (server-only) · middleware.ts
     session.ts             # requireUser() / getUserMembership() / requireCompany()
     types.ts               # hand-written row types (companies, customers, equipment, service records, public payload)
     equipment.ts           # date/warranty/service formatting shared by dashboard + public page
     equipment-search.ts    # PostgREST filter for the equipment search box
     services/              # next-service-date.ts (single date math) + service-windows.ts
     queries/               # service-opportunities.ts (shared dashboard reads)
-    validation/            # zod schemas for server actions (company, customer, equipment, service record)
+    storage/               # documents.ts: size/MIME/signature, filename and path rules
+    validation/            # zod schemas for server actions + strict public document whitelist
     public/                # unitpass-url.ts (QR payload) + get-unitpass.ts (RPC reader)
     utils.ts               # cn()
   globals.css              # Tailwind entry + design tokens
 scripts/
   verify-next-service-date.mjs  # month-end / interval / window assertions (pnpm verify:dates)
+  verify-documents.mjs          # signatures, compensation, token route contracts; mocked I/O, no framework
 middleware.ts              # session refresh + /dashboard guard
 supabase/
   migrations/              # authoritative schema (timestamped, idempotent)
@@ -71,8 +76,9 @@ prompts/                   # the phased development playbook
   `company_members`. A `company_id` sent by the browser is never trusted.
 * Supabase clients: `@supabase/ssr` (`createBrowserClient` / `createServerClient`). The deprecated
   `@supabase/auth-helpers-nextjs` is intentionally **not** used.
-* The service-role key is not used in Phase 1 at all. When a later phase needs it (signed URLs, cron, webhooks) it
-  must live in a server-only module and never reach the client bundle.
+* The service-role key lives only in `src/lib/supabase/admin.ts` (`import 'server-only'`). Phase 5 uses it
+  only after validating a public download's visibility/equipment/token pairing. Dashboard operations use the member
+  client and RLS. Never add a `NEXT_PUBLIC_` prefix to this key.
 
 ---
 
@@ -99,9 +105,10 @@ pnpm typecheck    # TypeScript, must be clean
 pnpm lint         # ESLint (next lint), must be clean
 pnpm build        # production build
 pnpm verify:dates # next-service-date math (month-end, leap year, windows, chips; Node 22.6+)
+pnpm verify:documents # focused upload/action/download checks with mocked I/O (NOT live Storage verification)
 ```
 
-Database security tests (see [`supabase/tests/README.md`](supabase/tests/README.md)) — Phases 1–4:
+Database security tests (see [`supabase/tests/README.md`](supabase/tests/README.md)) — Phases 1–5:
 
 ```bash
 psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/rls_tenant_isolation.sql
@@ -123,6 +130,7 @@ psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/check_rls_enabled.s
    psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20261015000001_phase2_customers.sql
    psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20261022000001_phase3_equipment.sql
    psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20261029000001_phase4_service_records.sql
+   psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20261105000001_phase5_documents.sql
    ```
 
    Or paste each file into the Supabase SQL editor in the same order. All migrations are idempotent. Phase 1 also
@@ -131,6 +139,9 @@ psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/check_rls_enabled.s
    equipment table, backfills a permanent `public_token` for existing rows, and installs the public RPC without
    deleting anything; Phase 4 creates `service_records`, backfills its denormalised `company_id` from equipment (and
    stops loudly if orphan rows make that impossible), and extends the public RPC with the capped service history.
+   Phase 5 adds document metadata, tenant/path enforcement, the private `documents` bucket and Storage policies,
+   and the public document whitelist. It must run as a role permitted to manage Storage policies (normally
+   the Supabase SQL editor/database owner). See the storage setup below; a failed transaction is NOT an applied migration.
 4. **Verify the security guarantees** by running the two scripts in `supabase/tests/` (section 2).
 5. **Auth URLs** — in *Authentication → URL Configuration*:
    * *Site URL*: `http://localhost:3000` for dev, your production domain later.
@@ -140,7 +151,7 @@ psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/check_rls_enabled.s
    testing you may turn it off; the app handles both (it detects an immediate session after sign-up and goes straight
    to the dashboard).
 
-### What the database guarantees (Phases 1–4)
+### What the database guarantees (Phases 1–5)
 
 | Table | Contents | Access |
 |---|---|---|
@@ -150,15 +161,17 @@ psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/check_rls_enabled.s
 | `customers` | company-owned contact records with `archived_at` soft archive | members read/insert/update only their company; hard-delete policy is reserved for a future explicit purge, and the app never hard-deletes |
 | `equipment` | company-owned installed units, service dates, public/private notes, and a permanent `public_token` | members read/insert/update only their company; **no delete privilege or policy** — units are retired with `status = 'Replaced'` so printed QR codes keep working |
 | `service_records` | company-owned service visits: date, type, technician, public notes, private notes, next service date | members read/insert/update/delete only their company (delete is the explicit mistake-correction path); `company_id` is resolved from `equipment` by a trigger, never trusted from the browser |
+| `documents` | equipment-level metadata and a private storage key (never a public URL) | members manage only their company; trigger derives tenant, enforces immutable file/equipment pairing, and a constraint validates the tenant/equipment storage prefix |
 
-* RLS is enabled on all six tables; `anon` has **no** privileges on them.
+* RLS is enabled on all seven tables; `anon` has **no** privileges on them.
 * `equipment.public_token` is generated by the database (`gen_random_uuid()`), is unique, and an immutability trigger
   rejects any attempt to change it. A trigger also refuses an equipment row whose `customer_id` belongs to another
   company.
 * The **only** anonymous database access is `public.get_public_unitpass(uuid)`, a `SECURITY DEFINER` function that
   returns an explicit whitelist (company contact + equipment identity, warranty, public notes, status, and the latest
-  20 service entries with only `service_date`, `service_type`, `technician_name` and `public_notes`). It never returns
-  internal ids, `installer_notes`, `private_notes`, or customer PII, and returns `NULL` for unknown tokens.
+  20 service entries with only `service_date`, `service_type`, `technician_name` and `public_notes`, plus public
+  documents containing only `id`, `name`, `type`). Only document ids are allowed, for the token-paired download
+  route. It never returns tenant/equipment/customer ids, storage paths, `installer_notes`, `private_notes`, or customer PII, and returns `NULL` for unknown tokens.
 * `service_records.company_id` is overwritten on every insert/update by `set_service_record_company()`, which reads the
   parent equipment row. A forged tenant id from the browser is therefore harmless, and RLS validates the resolved row.
 * `public.is_company_member()` / `public.is_company_admin()` are `SECURITY DEFINER` helpers used by the policies —
@@ -175,6 +188,7 @@ psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/check_rls_enabled.s
 | `NEXT_PUBLIC_SUPABASE_URL` | public | Supabase project URL |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | public | Supabase anonymous key (RLS-protected) |
 | `SUPABASE_DB_URL` | dev/CI only | Postgres connection string for migration and test scripts |
+| `SUPABASE_SERVICE_ROLE_KEY` | **server only** | Token-validated public document downloads; set in server environment, NEVER `NEXT_PUBLIC_` or browser code |
 
 Rules: only variable **names** live in `.env.example`; real values go in `.env.local` (gitignored) or the hosting
 provider's environment settings. A missing public variable fails fast at runtime with a message naming the variable —
@@ -214,6 +228,76 @@ the production build itself does not require credentials.
 * The public passport adds a **Last service** line and a **Service history** timeline (date, type, technician, public
   notes) and hides both when no visits exist. `private_notes` is absent from the RPC payload and the client parser
   fails closed if it ever appears.
+
+### Documents and private storage (Phase 5)
+
+* Use **Documents** in the sidebar for the company-wide list (equipment/type/visibility filters and pagination).
+  The primary upload entry is **Equipment → unit → Documents → Upload document**. Cards are used below `md`.
+* Upload one PDF, JPEG, PNG or WEBP, maximum **15 MB (15,728,640 bytes)**. The Server Action checks session,
+  membership, equipment ownership, size, extension, declared MIME **and magic bytes**. HTML/SVG are rejected.
+  Filenames are ASCII-sanitized to 120 characters and keys are
+  `{company_id}/{equipment_id}/{random_uuid}-{sanitized_name}`. Failed row inserts trigger object cleanup.
+* **Private** is the default, labelled “Private — never shown on UnitPass”. Public uploads/visibility changes
+  require an acknowledgement. The server checks this too. All existing roles (`owner`, `admin`, `technician`)
+  may manage their own company's documents; Storage write policies explicitly check these roles.
+* Dashboard downloads use member-RLS signed links. Public download links go through
+  `/p/{token}/documents/{documentId}`: visibility + exact equipment/token + tenant/path pairing are checked
+  server-side before signing. Failures return plain **404**, successes **307**, always **no-store**.
+  Replaced units keep historical public documents, matching the existing replaced passport behaviour.
+* Signed URLs expire after **300 seconds**. Making a document private removes it from the uncached public
+  payload immediately; already-issued links may work for the remaining five minutes. Files already downloaded
+  cannot be recalled. No permanent URL is saved or rendered on the passport.
+* Delete requires confirmation, removes the storage object first, then the metadata. If storage deletion fails,
+  the row is kept. If row deletion fails after removing bytes, the UI explicitly asks the user to retry Delete;
+  the same key can safely be removed again. Equipment/customer records are never deleted.
+
+#### Bucket/policy setup (owner required)
+
+The Phase 5 migration creates/updates the bucket **via SQL**. Apply it using the Supabase SQL editor or
+`psql` as the database owner. It sets `documents` to **private**, including if an older bucket was public.
+Never enable “Public bucket” and never use `getPublicUrl()` for these files.
+
+If Storage DDL is unavailable to the CLI credentials, the owner must use the Dashboard:
+
+1. **Storage → New bucket** (or edit existing) → name/id **`documents`** → **Public bucket OFF**.
+2. Bucket configuration → maximum file size **15 MB / 15728640 bytes** → allowed MIME types exactly:
+   `application/pdf`, `image/jpeg`, `image/png`, `image/webp`. The project-level file size limit must be at least 15 MB.
+3. **SQL editor**, as the project owner: run `20261105000001_phase5_documents.sql` in full. If policy ownership
+   prevents it, resolve that permission with the project owner before deploying; do not consider a rolled-back
+   migration applied. The SQL installs the table, `set_documents_company()` and
+   `can_access_document_storage(text, boolean)` helpers as well as the public RPC.
+4. **Storage → Policies → documents**: verify these exact policies (the migration creates them; manual recreation
+   uses these expressions). All grant policies target **`authenticated` only**, never `anon`/`public`:
+
+   | Policy | Operation | USING | WITH CHECK |
+   |---|---|---|---|
+   | `documents_select_members` | SELECT | `bucket_id = 'documents' and public.can_access_document_storage(name, false)` | — |
+   | `documents_insert_members` | INSERT | — | `bucket_id = 'documents' and public.can_access_document_storage(name, true)` |
+   | `documents_update_members` | UPDATE | `bucket_id = 'documents' and public.can_access_document_storage(name, true)` | same expression |
+   | `documents_delete_members` | DELETE | `bucket_id = 'documents' and public.can_access_document_storage(name, true)` | — |
+
+   Also verify `documents_member_fence`: **RESTRICTIVE**, ALL, `authenticated`, both expressions
+   `bucket_id <> 'documents' or public.can_access_document_storage(name, true)`. It fences older broad
+   authenticated policies without affecting other buckets. No anonymous access policy is created.
+5. Audit **all** existing `storage.objects` policies, not just those named `documents_*`:
+   permissive policies combine with OR. Remove/narrow any old `anon`/`public` grant that could include this bucket,
+   then run the SQL suite and the live HTTP checks in [`docs/phase5-verification.md`](docs/phase5-verification.md).
+   A private bucket flag alone does not replace RLS for authenticated/API access.
+
+#### Legacy documents and hosting limits
+
+Existing `file_url` values are preserved but **deprecated and never read**. No arbitrary external URL is fetched
+or converted into a trusted private path. Tenant ids are backfilled from equipment; orphan references stop the
+migration with a descriptive error and a complete rollback. Legacy records lacking private storage metadata are
+excluded from public payloads and cannot be edited/downloaded until re-uploaded. A `NOT VALID` check retains old
+rows while requiring full valid metadata for every new/updated row. Fresh tables have non-null storage metadata.
+Re-upload the file, verify the new private/public choice, then delete the old metadata entry if desired. External
+legacy URLs may still exist at their original host; only that host's owner can revoke them.
+
+Next's Server Action multipart limit is **16 MB** (file + form overhead); the file/bucket limit remains 15 MB.
+The hosting proxy/function must also allow the request. **Vercel Functions have a 4.5 MB request-body limit**:
+full-size 15 MB Server Action uploads need a host with a larger limit, or an owner-approved future change to a
+signed direct-to-Storage upload/finalization flow. Do not assume the Next setting overrides a host's limit.
 
 ## 5. Phase workflow (for the owner and for AI agents)
 

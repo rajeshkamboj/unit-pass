@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { CalendarClock, LayoutDashboard, LogOut, Menu, Settings, Users, Wrench, X } from 'lucide-react';
+import { CalendarClock, FileText, LayoutDashboard, LogOut, Menu, Settings, Users, Wrench, X } from 'lucide-react';
 import { signOut } from '@/app/auth/actions';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -11,8 +11,8 @@ import { cn } from '@/lib/utils';
 /**
  * Navigation for the dashboard shell.
  *
- * Only functionality that actually exists is listed (Phase 4: Dashboard,
- * Customers, Equipment, Services and company Settings). Later phases add their
+ * Only functionality that actually exists is listed (Phase 5: Dashboard,
+ * Customers, Equipment, Services, Documents and company Settings). Later phases add their
  * entries with each feature.
  */
 const NAV_ITEMS = [
@@ -20,6 +20,7 @@ const NAV_ITEMS = [
   { href: '/dashboard/customers', label: 'Customers', icon: Users },
   { href: '/dashboard/equipment', label: 'Equipment', icon: Wrench },
   { href: '/dashboard/services', label: 'Services', icon: CalendarClock },
+  { href: '/dashboard/documents', label: 'Documents', icon: FileText },
   { href: '/dashboard/settings', label: 'Settings', icon: Settings },
 ] as const;
 

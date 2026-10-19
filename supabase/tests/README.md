@@ -5,8 +5,9 @@ Security is a **database** behaviour, so it is tested in the database, not with 
 
 | File | Purpose |
 |---|---|
-| `rls_tenant_isolation.sql` | Proves tenant isolation. Phase 1 covers `companies`, `profiles`, `company_members`, the company-creation RPC, and anonymous access. Phase 2 covers customer select/insert/update/archive isolation and tenant-scoped search. Phase 3 covers equipment isolation, forged `company_id`/`customer_id` inserts, `public_token` immutability, the anonymous table lockout, and the `get_public_unitpass()` whitelist (no ids, no installer notes, no customer PII; unknown tokens return null). Phase 4 covers service-record select/update/delete isolation, cross-tenant equipment inserts, the trigger that overwrites a forged `company_id`, the anonymous lockout on `service_records`, and the capped/ordered public service history (private notes absent). Later phases append their own `SECTION N` blocks. |
+| `rls_tenant_isolation.sql` | Proves tenant isolation. Phase 1 covers `companies`, `profiles`, `company_members`, the company-creation RPC, and anonymous access. Phase 2 covers customer select/insert/update/archive isolation and tenant-scoped search. Phase 3 covers equipment isolation, forged `company_id`/`customer_id` inserts, `public_token` immutability, the anonymous table lockout, and the `get_public_unitpass()` whitelist (no ids, no installer notes, no customer PII; unknown tokens return null). Phase 4 covers service-record select/update/delete isolation, cross-tenant equipment inserts, the trigger that overwrites a forged `company_id`, the anonymous lockout on `service_records`, and the capped/ordered public service history (private notes absent). Phase 5 covers document row isolation, spoofed tenant/uploader resolution, immutable/canonical private paths, the public document whitelist and immediate visibility revocation, Storage isolation in both directions, malformed paths, stale profile pointers, anonymous listing/write denial, and private bucket configuration. Later phases append their own `SECTION N` blocks. |
 | `check_rls_enabled.sql` | Fails if any table in `public` is missing RLS, then prints the table/policy inventory. |
+| `local/storage_shim.sql` | Optional private Storage table/policy surface for plain PostgreSQL; NOT a Storage HTTP/signed-URL implementation. Never apply on Supabase. |
 | `local/postgres_shim.sql` | Optional shim that emulates the few Supabase-specific objects (`auth.users`, `auth.uid()`, `anon`/`authenticated` roles) so the two scripts above can run on a plain, disposable PostgreSQL instance. |
 
 ## Running against your Supabase project (canonical)
@@ -20,8 +21,8 @@ psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/check_rls_enabled.s
 What success looks like:
 
 * `rls_tenant_isolation.sql` prints the Phase 1 checks, `PASS: 2.1 …` through `PASS: 2.8 …`, `PASS: 3.1 …` through
-  `PASS: 3.9 …`, `PASS: 4.1 …` through `PASS: 4.7 …`, then
-  `ALL CHECKS PASSED (Phase 1 + Phase 2 + Phase 3 + Phase 4 tenant isolation)`, and finishes with `ROLLBACK`. Any
+  `PASS: 3.9 …`, `PASS: 4.1 …` through `PASS: 4.7 …`, and `PASS: 5.1 …` through `PASS: 5.10 …`, then
+  `ALL CHECKS PASSED (Phase 1 + Phase 2 + Phase 3 + Phase 4 + Phase 5 tenant isolation)`, and finishes with `ROLLBACK`. Any
   violated assertion raises an exception, psql exits non-zero, and the transaction is rolled back.
 * `check_rls_enabled.sql` prints `PASS: RLS is enabled on every table in the public schema` plus the
   inventory tables.
@@ -38,13 +39,23 @@ PostgreSQL 13+ instance:
 ```bash
 createdb unitpass_local
 psql -d unitpass_local -v ON_ERROR_STOP=1 -f supabase/tests/local/postgres_shim.sql
+psql -d unitpass_local -v ON_ERROR_STOP=1 -f supabase/tests/local/storage_shim.sql
 psql -d unitpass_local -v ON_ERROR_STOP=1 -f supabase/migrations/20261007000001_phase1_foundation.sql
 psql -d unitpass_local -v ON_ERROR_STOP=1 -f supabase/migrations/20261015000001_phase2_customers.sql
 psql -d unitpass_local -v ON_ERROR_STOP=1 -f supabase/migrations/20261022000001_phase3_equipment.sql
 psql -d unitpass_local -v ON_ERROR_STOP=1 -f supabase/migrations/20261029000001_phase4_service_records.sql
+psql -d unitpass_local -v ON_ERROR_STOP=1 -f supabase/migrations/20261105000001_phase5_documents.sql
 psql -d unitpass_local -v ON_ERROR_STOP=1 -f supabase/tests/rls_tenant_isolation.sql
 psql -d unitpass_local -v ON_ERROR_STOP=1 -f supabase/tests/check_rls_enabled.sql
 ```
 
 The shim is **only** for local verification: never apply it to a Supabase project, where these objects
 already exist.
+
+## Phase 5 live Storage verification
+
+Local shims exercise PostgreSQL policies only. They cannot prove that Supabase's HTTP object endpoints deny
+anonymous requests or that real signed URLs deliver bytes and expire. A mock signing response also cannot prove
+those properties. Run the four attack vectors, actual public download, TTL check and phone upload checklist in
+[`docs/phase5-verification.md`](../../docs/phase5-verification.md) against a staging Supabase project before
+reporting `SECURITY CHECK: PASS` / `SAFE TO MERGE: YES`.

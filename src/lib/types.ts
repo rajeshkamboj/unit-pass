@@ -188,9 +188,32 @@ export type ServiceOpportunityRow = Pick<
   customers: ServiceCustomerSummary | ServiceCustomerSummary[] | null;
 };
 
+export const DOCUMENT_TYPES = ['Warranty', 'User Manual', 'Installation Invoice', 'Service Report', 'Other'] as const;
+export const DOCUMENT_VISIBILITIES = ['Public', 'Private'] as const;
+export type DocumentType = (typeof DOCUMENT_TYPES)[number];
+export type DocumentVisibility = (typeof DOCUMENT_VISIBILITIES)[number];
+
+export type DocumentEquipmentOption = { id: string; equipment_name: string };
+export type DocumentListRow = {
+  id: string;
+  equipment_id: string;
+  name: string;
+  type: DocumentType;
+  visibility: DocumentVisibility;
+  // Nullable only for preserved, pre-Phase-5 legacy records awaiting re-upload.
+  file_name: string | null;
+  mime_type: string | null;
+  file_size: number | null;
+  created_at: string;
+  updated_at: string;
+  equipment: { equipment_name: string } | { equipment_name: string }[] | null;
+};
+export type PublicDocument = { id: string; name: string; type: DocumentType };
+
 /**
  * The exact payload of `public.get_public_unitpass(uuid)`.
- * Deliberately contains no internal ids, no installer notes and no customer PII.
+ * Contains no tenant/equipment/customer ids, no installer notes and no customer PII.
+ * Public document ids are allowed only for the token-paired download route.
  */
 export type PublicUnitPass = {
   company: {
@@ -216,6 +239,7 @@ export type PublicUnitPass = {
   };
   /** Newest-first, capped at 20 by the RPC. Never contains private notes. */
   service_history: ServiceHistoryEntry[];
+  documents: PublicDocument[];
 };
 
 export type CompanyMemberRow = {
