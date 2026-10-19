@@ -1,25 +1,50 @@
 'use client';
 
-import { useActionState } from 'react';
-import { useFormStatus } from 'react-dom';
-import { createCompany, type CompanySetupState } from './actions';
+import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
+import { createCompany } from './actions';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
-const INITIAL_STATE: CompanySetupState = { error: null };
-
 export function CompanySetupForm() {
-  const [state, formAction] = useActionState(createCompany, INITIAL_STATE);
+  const router = useRouter();
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+
+  // Plain submit handler instead of React 19's `useActionState`: Next 14 bundles
+  // React 18, so that hook is undefined at runtime and crashed this page.
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    setError(null);
+
+    startTransition(async () => {
+      try {
+        const result = await createCompany(formData);
+        if (result.error) {
+          setError(result.error);
+          return;
+        }
+        router.push('/dashboard');
+        router.refresh();
+      } catch {
+        setError('We could not create your company. Please try again.');
+      }
+    });
+  }
 
   return (
     <Card>
       <CardContent className="pt-6">
-        <form action={formAction} className="space-y-6">
-          {state.error ? (
-            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-              {state.error}
+        <form onSubmit={handleSubmit} noValidate className="space-y-6" aria-busy={pending}>
+          {error ? (
+            <div
+              role="alert"
+              className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+            >
+              {error}
             </div>
           ) : null}
 
@@ -73,18 +98,11 @@ export function CompanySetupForm() {
             </p>
           </div>
 
-          <SubmitButton />
+          <Button type="submit" disabled={pending} className="w-full sm:w-auto">
+            {pending ? 'Creating company…' : 'Create company'}
+          </Button>
         </form>
       </CardContent>
     </Card>
-  );
-}
-
-function SubmitButton() {
-  const { pending } = useFormStatus();
-  return (
-    <Button type="submit" disabled={pending} className="w-full sm:w-auto">
-      {pending ? 'Creating company…' : 'Create company'}
-    </Button>
   );
 }

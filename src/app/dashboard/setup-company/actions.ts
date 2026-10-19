@@ -1,6 +1,5 @@
 'use server';
 
-import { redirect } from 'next/navigation';
 import { getSupabaseServerClient } from '@/lib/supabase/server';
 import { getUserMembership, requireUser } from '@/lib/session';
 
@@ -15,12 +14,16 @@ const MAX_INTERVAL_MONTHS = 60;
  * The browser never sends a company id: the function derives ownership from the
  * authenticated session, so this action cannot be used to join or create a
  * company on someone else's behalf.
+ *
+ * Returns a state object; the client navigates on success. (This deliberately
+ * avoids React 19-only form hooks: Next 14 vendors React 18, where
+ * `useActionState` does not exist.)
  */
-export async function createCompany(_prevState: CompanySetupState, formData: FormData): Promise<CompanySetupState> {
+export async function createCompany(formData: FormData): Promise<CompanySetupState> {
   const user = await requireUser();
 
   const existing = await getUserMembership(user.id);
-  if (existing) redirect('/dashboard');
+  if (existing) return { error: null };
 
   const name = stringField(formData, 'name');
   const contactName = stringField(formData, 'contactName');
@@ -58,7 +61,7 @@ export async function createCompany(_prevState: CompanySetupState, formData: For
     return { error: 'We could not create your company. Please try again.' };
   }
 
-  redirect('/dashboard');
+  return { error: null };
 }
 
 function stringField(formData: FormData, key: string): string {
