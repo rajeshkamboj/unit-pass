@@ -1,4 +1,4 @@
-import { Image } from 'next/image';
+import Image from 'next/image';
 import Link from 'next/link';
 
 export default function HomePage() {
@@ -30,8 +30,6 @@ export default function HomePage() {
             </Link>
           </div>
         </div>
-        {/* Background image */}
-        <div className="absolute inset-0 bg-[url('/hero.jpg')] bg-center bg-cover opacity-20"></div>
       </section>
 
       {/* Problem Section */}
@@ -121,7 +119,7 @@ export default function HomePage() {
             </div>
             <div className="hidden md:block">
               <Image
-                src="/how-it-works.svg"
+                src="/placeholder.svg"
                 alt="How it works illustration"
                 width={600}
                 height={400}
@@ -259,8 +257,8 @@ export default function HomePage() {
             <div className="bg-white p-6 rounded-lg shadow">
               <h3 className="text-lg font-semibold mb-3">Is my data secure?</h3>
               <p className="text-gray-600">
-                Yes. We use industry-standard encryption and Supabase's
-                security features to protect your data. Each company's data
+                Yes. We use industry-standard encryption and Supabase&apos;s
+                security features to protect your data. Each company&apos;s data
                 is isolated using Row Level Security.
               </p>
             </div>
@@ -281,7 +279,7 @@ export default function HomePage() {
             <div className="bg-white p-6 rounded-lg shadow">
               <h3 className="text-lg font-semibold mb-3">What happens after the trial?</h3>
               <p className="text-gray-600">
-                You'll be prompted to choose a plan and enter payment
+                You&apos;ll be prompted to choose a plan and enter payment
                 information. Your data will be preserved.
               </p>
             </div>

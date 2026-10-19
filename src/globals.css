@@ -99,3 +99,24 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Print rules (Phase 3 QR labels).
+ * The dashboard sidebar/header already carry `print:hidden`; these rules make
+ * sure a label prints on a clean white page regardless of the active theme.
+ * ------------------------------------------------------------------------- */
+@media print {
+  @page {
+    margin: 12mm;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+    color: #000000 !important;
+  }
+
+  #unitpass-print-label {
+    break-inside: avoid;
+  }
+}
