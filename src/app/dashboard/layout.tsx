@@ -19,10 +19,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const membership = await getUserMembership(user.id);
 
   return (
-    <div className="flex min-h-screen flex-col bg-muted/20 md:flex-row">
+    <div className="flex min-h-screen flex-col bg-muted/20 md:flex-row print:block print:min-h-0 print:bg-white">
       <Sidebar companyName={membership?.company.name ?? null} userEmail={user.email} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-6 sm:px-6 lg:px-8">
+        <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-6 sm:px-6 lg:px-8 print:max-w-none print:p-0">
           {children}
         </main>
       </div>

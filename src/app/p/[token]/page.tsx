@@ -38,6 +38,7 @@ export default async function PublicUnitPassPage({ params }: Props) {
   const warranty = describeWarranty(equipment.warranty_expiration_date);
   const bookingUrl = safeHttpUrl(company.service_booking_url);
   const websiteUrl = safeHttpUrl(company.website);
+  const logoUrl = safeHttpUrl(company.logo_url);
   const hasContact = Boolean(company.phone || company.email);
 
   return (
@@ -52,10 +53,10 @@ export default async function PublicUnitPassPage({ params }: Props) {
               <p className="text-sm font-medium text-muted-foreground">Digital Service Passport</p>
               <p className="text-xs uppercase tracking-wide text-muted-foreground">Powered by UnitPass</p>
             </div>
-            {company.logo_url ? (
+            {logoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={company.logo_url}
+                src={logoUrl}
                 alt={`${company.name} logo`}
                 className="h-12 w-auto max-w-40 shrink-0 object-contain"
               />
