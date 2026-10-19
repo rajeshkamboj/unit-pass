@@ -40,6 +40,11 @@ export default async function PublicUnitPassPage({ params }: Props) {
   const websiteUrl = safeHttpUrl(company.website);
   const logoUrl = safeHttpUrl(company.logo_url);
   const hasContact = Boolean(company.phone || company.email);
+  const serviceHistory = pass.service_history;
+  const lastService = serviceHistory[0] ?? null;
+  const lastServiceLabel = lastService
+    ? [lastService.service_type, formatDateOnly(lastService.service_date)].filter(Boolean).join(' · ')
+    : null;
 
   return (
     <main className="min-h-screen bg-muted/20 px-4 py-6 text-base sm:py-10">
@@ -106,6 +111,7 @@ export default async function PublicUnitPassPage({ params }: Props) {
             <DetailRow label="Model number" value={equipment.model_number} />
             <DetailRow label="Serial number" value={equipment.serial_number} />
             <DetailRow label="Installed" value={formatDateOnly(equipment.installation_date)} />
+            {lastServiceLabel ? <DetailRow label="Last service" value={lastServiceLabel} /> : null}
           </dl>
         </section>
 
@@ -135,6 +141,43 @@ export default async function PublicUnitPassPage({ params }: Props) {
             </p>
           ) : null}
         </section>
+
+        {serviceHistory.length > 0 ? (
+          <section
+            aria-labelledby="service-history-heading"
+            className="rounded-lg border bg-card p-5 shadow-sm sm:p-6"
+          >
+            <h2 id="service-history-heading" className="text-lg font-semibold">
+              Service history
+            </h2>
+            <ol className="mt-4 space-y-5">
+              {serviceHistory.map((entry, index) => (
+                <li
+                  key={`${entry.service_date}-${index}`}
+                  className="relative border-l-2 border-muted pl-4"
+                >
+                  <span
+                    className="absolute -left-[5px] top-1.5 h-2 w-2 rounded-full bg-primary"
+                    aria-hidden="true"
+                  />
+                  <p className="text-base font-semibold">{formatDateOnly(entry.service_date)}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {entry.service_type}
+                    {entry.technician_name ? ` · ${entry.technician_name}` : ''}
+                  </p>
+                  {entry.public_notes ? (
+                    <p className="mt-1 max-w-prose whitespace-pre-line break-words text-base">
+                      {entry.public_notes}
+                    </p>
+                  ) : null}
+                </li>
+              ))}
+            </ol>
+            {serviceHistory.length >= 20 ? (
+              <p className="mt-4 text-sm text-muted-foreground">Showing the 20 most recent visits.</p>
+            ) : null}
+          </section>
+        ) : null}
 
         {equipment.public_notes ? (
           <section aria-labelledby="notes-heading" className="rounded-lg border bg-card p-5 shadow-sm sm:p-6">

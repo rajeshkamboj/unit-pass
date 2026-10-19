@@ -134,6 +134,60 @@ export type CustomerOption = {
   last_name: string;
 };
 
+/** Enum labels mirror `public.service_type` exactly (legacy spellings, no new ones). */
+export const SERVICE_TYPES = [
+  'Installation',
+  'Maintenance',
+  'Repair',
+  'Inspection',
+  'Warranty Service',
+  'Other',
+] as const;
+
+export type ServiceType = (typeof SERVICE_TYPES)[number];
+
+export type ServiceRecordRow = {
+  id: string;
+  equipment_id: string;
+  company_id: string;
+  service_date: string;
+  service_type: ServiceType;
+  technician_name: string | null;
+  public_notes: string | null;
+  private_notes: string | null;
+  next_service_date: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ServiceRecordFormRow = Pick<
+  ServiceRecordRow,
+  'id' | 'service_date' | 'service_type' | 'technician_name' | 'public_notes' | 'private_notes' | 'next_service_date'
+>;
+
+/** One entry of the public `service_history` array (whitelisted columns only). */
+export type ServiceHistoryEntry = {
+  service_date: string;
+  service_type: ServiceType;
+  technician_name: string | null;
+  public_notes: string | null;
+};
+
+/** Customer contact shown only inside the authenticated services dashboard. */
+export type ServiceCustomerSummary = {
+  first_name: string;
+  last_name: string;
+  phone: string | null;
+  email: string | null;
+};
+
+export type ServiceOpportunityRow = Pick<
+  EquipmentRow,
+  'id' | 'customer_id' | 'equipment_name' | 'equipment_type' | 'next_service_date' | 'status' | 'service_interval'
+> & {
+  customers: ServiceCustomerSummary | ServiceCustomerSummary[] | null;
+};
+
 /**
  * The exact payload of `public.get_public_unitpass(uuid)`.
  * Deliberately contains no internal ids, no installer notes and no customer PII.
@@ -160,6 +214,8 @@ export type PublicUnitPass = {
     status: EquipmentStatus;
     photo_path: string | null;
   };
+  /** Newest-first, capped at 20 by the RPC. Never contains private notes. */
+  service_history: ServiceHistoryEntry[];
 };
 
 export type CompanyMemberRow = {
