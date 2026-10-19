@@ -39,6 +39,19 @@ const T = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1';
 const path = `${A}/${E}/${D}-warranty.pdf`;
 const pdf = new File(['%PDF-1.7\nfixture'], 'warranty.pdf', { type: 'application/pdf' });
 
+await check('hosted Storage preflight reads RLS catalog without altering the managed table', () => {
+  const migration = readFileSync(resolve(root, 'supabase/migrations/20261105000001_phase5_documents.sql'), 'utf8');
+  const sql = migration.replace(/--.*$/gm, '');
+  assert.doesNotMatch(sql, /alter\s+table\s+(?:if\s+exists\s+)?(?:"storage"|storage)\s*\.\s*(?:"objects"|objects)\s/i);
+  const preflight = sql.match(/do \$storage_rls\$[\s\S]*?\$storage_rls\$;/i)?.[0];
+  assert.ok(preflight, 'Expected a read-only Storage RLS precondition');
+  assert.match(preflight, /pg_catalog\.pg_class[\s\S]*relrowsecurity/i);
+  assert.match(preflight, /raise exception[\s\S]*errcode = '55000'/i);
+  for (const operation of ['select', 'insert', 'update', 'delete']) {
+    assert.match(sql, new RegExp(`create policy documents_${operation}_members on storage\\.objects for ${operation} to authenticated`, 'i'));
+  }
+});
+
 await check('PDF/JPEG/PNG/WEBP signatures and matching extensions accepted', () => {
   const fixtures = [
     ['pdf', 'application/pdf', [37,80,68,70,45]], ['jpeg', 'image/jpeg', [255,216,255]],

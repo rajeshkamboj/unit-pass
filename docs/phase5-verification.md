@@ -13,7 +13,7 @@ service-role key or database connection was available in this session. No live S
 |---|---|
 | `pnpm install --frozen-lockfile` | PASS; no dependency or lockfile changes |
 | `pnpm typecheck` / `pnpm lint` / `pnpm build` | PASS before implementation and after implementation |
-| `pnpm verify:documents` | PASS: 13 focused checks, including the four signatures, invalid extensions/MIME, zero/20 MB rejection, filename/path safety, strict public whitelist, upload compensation, partial delete, tenant scoping, visibility acknowledgement and 404/307 route contracts. **Storage/auth I/O is mocked.** |
+| `pnpm verify:documents` | PASS: 14 focused checks, including a regression guard against managed-table ALTERs, the four signatures, invalid extensions/MIME, zero/20 MB rejection, filename/path safety, strict public whitelist, upload compensation, partial delete, tenant scoping, visibility acknowledgement and 404/307 route contracts. **Storage/auth I/O is mocked.** |
 | `pnpm verify:dates` | PASS: 12 existing Phase 4 regression checks |
 | Phase 1–5 migrations on disposable **PostgreSQL 17.6** | PASS with `local/postgres_shim.sql` + `local/storage_shim.sql`; Phase 5 also reapplied successfully |
 | `supabase/tests/rls_tenant_isolation.sql` | PASS locally, all Phases 1–5; `PASS: 5.1` through `PASS: 5.10`, final `ALL CHECKS PASSED … Phase 5 tenant isolation`, ROLLBACK |
@@ -53,6 +53,28 @@ live evidence is currently:
 | Public download route with a private document id | **UNVERIFIED live** (local route check: 404) |
 | Other equipment token with a real public document id | **UNVERIFIED live** (local route check: 404) |
 | Anonymous bucket listing / authenticated-object URL | **UNVERIFIED — not run, no Supabase configuration** |
+
+## Hosted Storage ownership correction
+
+The original Phase 5 SQL included `ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY`. That line can
+raise `42501: must be owner of table objects` on hosted Supabase even in the SQL editor. The corrected file
+replaces it with a read-only, fail-closed `pg_class.relrowsecurity` check. It does not change table ownership,
+disable security, swallow permission errors, or skip installing the Storage policies.
+
+The failed transaction must be retried using the **entire corrected migration** as database role **`postgres`**.
+If the client retains the aborted transaction, issue `ROLLBACK;` first. No new schema changes require a separate
+migration here: this corrects the failed installation precondition without changing the target schema or deleting
+existing data. Already-applied successful installations need no repair to their table ownership or RLS setting.
+See `README.md` → Phase 5 ownership troubleshooting for the exact steps and diagnostic query.
+
+Follow-up verification (`node node_modules/.phase5-tools/verify-storage-ownership.cjs` against disposable
+PostgreSQL 17.6): the original ALTER reproduced **42501** under a non-owner role; the **exact preflight extracted
+from the corrected migration** succeeded under that role with RLS enabled, and rejected RLS-disabled storage with
+**55000**. Test roles/settings were rolled back. Fresh migration, repeat migration, the Phase 1–5 isolation suite
+and RLS coverage check all passed. `pnpm typecheck && pnpm lint && pnpm build` and the 14 document checks also passed.
+This models PostgreSQL ownership/preconditions, not hosted `supautils` policy delegation or the Storage HTTP API;
+those live checks remain **UNVERIFIED**.
+
 
 ## Owner: apply and verify against staging
 

@@ -676,6 +676,8 @@ phase's acceptance criteria, and say "deferred to Phase N" instead of building i
 | 2026-10-19 | 5 | Preserve deprecated `file_url` and quarantine legacy rows with missing private metadata; enforce a NOT VALID metadata check for new/updated rows; stop on orphan equipment | cannot safely invent private paths or migrate arbitrary remote files; never delete legacy customer data |
 | 2026-10-19 | 5 | Server Action body limit 16 MB, application/bucket file limit 15 MB; hosting must support that payload (Vercel's 4.5 MB limit needs a future direct-upload design if full-size uploads are required) | follows the phase's Server Action upload requirement without pretending framework configuration changes platform limits |
 
+| 2026-10-19 | 5 follow-up | Replace the failed Storage table ALTER with a read-only, fail-closed RLS precondition; preserve all policies | hosted Supabase delegates policy management to `postgres` without granting ownership of `storage.objects`; never alter the managed table or bypass RLS to fix SQLSTATE 42501 |
+
 Future phases: add a row per decision that changes architecture, dependencies, schema, or security posture.
 
 ---

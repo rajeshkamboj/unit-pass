@@ -254,7 +254,7 @@ the production build itself does not require credentials.
 #### Bucket/policy setup (owner required)
 
 The Phase 5 migration creates/updates the bucket **via SQL**. Apply it using the Supabase SQL editor or
-`psql` as the database owner. It sets `documents` to **private**, including if an older bucket was public.
+`psql` as the project `postgres` role. It sets `documents` to **private**, including if an older bucket was public.
 Never enable “Public bucket” and never use `getPublicUrl()` for these files.
 
 If Storage DDL is unavailable to the CLI credentials, the owner must use the Dashboard:
@@ -262,7 +262,7 @@ If Storage DDL is unavailable to the CLI credentials, the owner must use the Das
 1. **Storage → New bucket** (or edit existing) → name/id **`documents`** → **Public bucket OFF**.
 2. Bucket configuration → maximum file size **15 MB / 15728640 bytes** → allowed MIME types exactly:
    `application/pdf`, `image/jpeg`, `image/png`, `image/webp`. The project-level file size limit must be at least 15 MB.
-3. **SQL editor**, as the project owner: run `20261105000001_phase5_documents.sql` in full. If policy ownership
+3. **SQL editor**, with the database role set to **`postgres`**: run `20261105000001_phase5_documents.sql` in full. If policy ownership
    prevents it, resolve that permission with the project owner before deploying; do not consider a rolled-back
    migration applied. The SQL installs the table, `set_documents_company()` and
    `can_access_document_storage(text, boolean)` helpers as well as the public RPC.
@@ -283,6 +283,30 @@ If Storage DDL is unavailable to the CLI credentials, the owner must use the Das
    permissive policies combine with OR. Remove/narrow any old `anon`/`public` grant that could include this bucket,
    then run the SQL suite and the live HTTP checks in [`docs/phase5-verification.md`](docs/phase5-verification.md).
    A private bucket flag alone does not replace RLS for authenticated/API access.
+
+#### If SQL reports `42501: must be owner of table objects`
+
+An earlier copy of Phase 5 incorrectly ran `ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY`.
+Supabase owns that managed table; its hosted `postgres` role can manage policies but cannot alter the table.
+The corrected migration **reads** `pg_class.relrowsecurity` instead, and stops if RLS is not enabled.
+It still creates all four authenticated access policies and the restrictive tenant fence.
+
+1. Use the updated `supabase/migrations/20261105000001_phase5_documents.sql`.
+2. Open **SQL editor**, select database role **`postgres`**, and run the **whole file**, not just the policy tail.
+   The original file is wrapped in `BEGIN`/`COMMIT`; a failure before commit rolls the transaction back.
+   If your client retains an aborted transaction, run `ROLLBACK;` before retrying. It is safe to rerun this
+   idempotent migration; no customer rows or files are removed.
+3. Confirm the managed table's existing setting with this read-only query (expect `true`):
+
+   ```sql
+   select relrowsecurity
+   from pg_catalog.pg_class
+   where oid = 'storage.objects'::regclass;
+   ```
+
+Do not change `storage.objects` ownership, grant yourself an internal Supabase role, disable RLS, or skip the
+Storage policies. If policy creation itself still fails as `postgres`, use **Storage → Policies** / project
+support; keep deployment blocked until the exact policies above and the security tests are verified.
 
 #### Legacy documents and hosting limits
 
@@ -330,6 +354,7 @@ never expose private data on public pages, and never build features from a later
 | Sign-in works but `/dashboard` bounces to sign-in | The session cookie is not being set (wrong `NEXT_PUBLIC_SUPABASE_URL`) or the middleware matcher was edited. |
 | Password reset link → "Link expired" | The link was already used, expired, or the `redirectTo` URL is not allowlisted in Supabase. |
 | `permission denied for table …` in tests | You are running the isolation test as a role that cannot `set role authenticated`; run it as the migration owner (`postgres`). |
+| `42501: must be owner of table objects` during Phase 5 | Use the corrected migration, which checks RLS without altering Supabase's managed table; run the whole file as `postgres`. See the Phase 5 troubleshooting steps above. |
 | `infinite recursion detected in policy` | The legacy schema is still applied — run the Phase 1 migration, which replaces those policies. |
 
 ---

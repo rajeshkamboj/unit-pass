@@ -153,9 +153,23 @@ insert into storage.buckets(id, name, public, file_size_limit, allowed_mime_type
 values ('documents', 'documents', false, 15728640, array['application/pdf','image/jpeg','image/png','image/webp'])
 on conflict (id) do update set public = false, file_size_limit = excluded.file_size_limit, allowed_mime_types = excluded.allowed_mime_types;
 
--- Supabase owns storage.objects; explicitly retain RLS even on a partial install.
+-- Supabase manages storage.objects and enables its RLS. The hosted postgres
+-- role can manage Storage policies through supautils, but does not own this
+-- table: ALTER TABLE ... ENABLE ROW LEVEL SECURITY fails with SQLSTATE 42501.
+-- Check the catalog instead of altering the managed table. Fail closed if a
+-- non-standard/local installation has not enabled RLS; never skip the policies.
+do $storage_rls$
+begin
+  if not exists (
+    select 1 from pg_catalog.pg_class
+    where oid = 'storage.objects'::regclass and relrowsecurity
+  ) then
+    raise exception 'Phase 5 stopped: RLS is not enabled on storage.objects. Restore the managed Supabase Storage setup before retrying; no document policies were installed.'
+      using errcode = '55000';
+  end if;
+end
+$storage_rls$;
 -- No anon/public grant policies.
-alter table storage.objects enable row level security;
 drop policy if exists documents_select_members on storage.objects;
 drop policy if exists documents_insert_members on storage.objects;
 drop policy if exists documents_update_members on storage.objects;
