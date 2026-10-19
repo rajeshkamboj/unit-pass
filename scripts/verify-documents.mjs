@@ -39,6 +39,19 @@ const T = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc1';
 const path = `${A}/${E}/${D}-warranty.pdf`;
 const pdf = new File(['%PDF-1.7\nfixture'], 'warranty.pdf', { type: 'application/pdf' });
 
+await check('Phase 5 checks prior database migrations before creating document objects', () => {
+  const migration = readFileSync(resolve(root, 'supabase/migrations/20261105000001_phase5_documents.sql'), 'utf8');
+  const preflight = migration.match(/do \$phase5_prerequisites\$[\s\S]*?\$phase5_prerequisites\$;/i)?.[0];
+  assert.ok(preflight, 'Expected a prerequisite check');
+  assert.ok(migration.indexOf(preflight) < migration.indexOf('create type public.document_type'));
+  assert.match(preflight, /pg_catalog\.to_regclass\(required_table\)/);
+  assert.match(preflight, /pg_catalog\.to_regprocedure\(required_function\)/);
+  assert.match(preflight, /'public\.service_records'/);
+  assert.match(preflight, /'public\.set_service_record_company\(\)'/);
+  assert.match(preflight, /20261029000001_phase4_service_records\.sql/);
+  assert.match(preflight, /errcode = '55000'/);
+});
+
 await check('hosted Storage preflight reads RLS catalog without altering the managed table', () => {
   const migration = readFileSync(resolve(root, 'supabase/migrations/20261105000001_phase5_documents.sql'), 'utf8');
   const sql = migration.replace(/--.*$/gm, '');

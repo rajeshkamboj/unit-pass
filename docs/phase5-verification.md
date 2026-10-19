@@ -13,7 +13,7 @@ service-role key or database connection was available in this session. No live S
 |---|---|
 | `pnpm install --frozen-lockfile` | PASS; no dependency or lockfile changes |
 | `pnpm typecheck` / `pnpm lint` / `pnpm build` | PASS before implementation and after implementation |
-| `pnpm verify:documents` | PASS: 14 focused checks, including a regression guard against managed-table ALTERs, the four signatures, invalid extensions/MIME, zero/20 MB rejection, filename/path safety, strict public whitelist, upload compensation, partial delete, tenant scoping, visibility acknowledgement and 404/307 route contracts. **Storage/auth I/O is mocked.** |
+| `pnpm verify:documents` | PASS: 15 focused checks, including prior-phase prerequisite checks and a regression guard against managed-table ALTERs, the four signatures, invalid extensions/MIME, zero/20 MB rejection, filename/path safety, strict public whitelist, upload compensation, partial delete, tenant scoping, visibility acknowledgement and 404/307 route contracts. **Storage/auth I/O is mocked.** |
 | `pnpm verify:dates` | PASS: 12 existing Phase 4 regression checks |
 | Phase 1–5 migrations on disposable **PostgreSQL 17.6** | PASS with `local/postgres_shim.sql` + `local/storage_shim.sql`; Phase 5 also reapplied successfully |
 | `supabase/tests/rls_tenant_isolation.sql` | PASS locally, all Phases 1–5; `PASS: 5.1` through `PASS: 5.10`, final `ALL CHECKS PASSED … Phase 5 tenant isolation`, ROLLBACK |
@@ -76,6 +76,29 @@ This models PostgreSQL ownership/preconditions, not hosted `supautils` policy de
 those live checks remain **UNVERIFIED**.
 
 
+## Missing Phase 4 table correction
+
+`42P01: relation "public.service_records" does not exist` means the target database is missing the table created
+by `20261029000001_phase4_service_records.sql`. A merged code phase is not evidence that its migration was applied
+to this Supabase project. Confirm the project, apply that **complete Phase 4 migration**, then rerun the whole
+corrected Phase 5 file. If other prerequisites are missing, apply Phases 1–4 in timestamp order first.
+
+Phase 5 now checks prerequisite tables/functions with `to_regclass` / `to_regprocedure` immediately after `BEGIN`,
+before creating types, changing tables or configuring Storage. Missing prerequisites raise **55000** with an
+explicit migration-order hint; no partial Phase 5 changes are committed. The service-history whitelist and actual
+Phase 4 migration remain unchanged; no placeholder table is created and no customer data is deleted.
+
+Follow-up verification (`node node_modules/.phase5-tools/verify-prerequisites.cjs`, disposable PostgreSQL 17.6):
+
+* A database with only Phases 1–3 rejected Phase 5 with **55000**, naming `public.service_records` and the exact
+  Phase 4 file. No document table/type/helper, bucket or public-RPC changes remained after rollback.
+* Applying the complete Phase 4 file, then Phase 5 twice, passed; the missing-table failure was resolved.
+* A temporarily renamed Phase 4 helper was detected as an incomplete prerequisite; the local test rename was
+  rolled back and the helper restored.
+* The Phase 1–5 isolation/RLS suites, the previous non-owner Storage checks, all **15** document checks and
+  `pnpm typecheck && pnpm lint && pnpm build` passed. The target Supabase project remains unverified.
+
+
 ## Owner: apply and verify against staging
 
 1. Configure `.env.local` / server environment using `.env.example`. `SUPABASE_SERVICE_ROLE_KEY` is **server-only**,
@@ -83,6 +106,8 @@ those live checks remain **UNVERIFIED**.
 2. Apply all prerequisite migrations and then Phase 5, using an owner role that can manage Storage policies:
 
    ```bash
+   # If Phase 4 has not been applied in this project, run it first (after Phases 1-3):
+   psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20261029000001_phase4_service_records.sql
    psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/migrations/20261105000001_phase5_documents.sql
    psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/rls_tenant_isolation.sql
    psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/check_rls_enabled.sql

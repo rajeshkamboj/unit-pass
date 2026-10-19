@@ -5,6 +5,41 @@
 -- be published. A NOT VALID constraint enforces metadata for all new/updated rows.
 begin;
 
+-- Source code merged into main does not mean its SQL was applied to this
+-- project. Check all prerequisite tables/helpers BEFORE changing any objects.
+-- Do not manufacture an empty service_records table or omit public history.
+do $phase5_prerequisites$
+declare
+  v_missing text[];
+begin
+  select array_agg(required_table order by required_table) into v_missing
+  from unnest(array[
+    'public.companies', 'public.profiles', 'public.company_members',
+    'public.customers', 'public.equipment', 'public.service_records'
+  ]) as required_tables(required_table)
+  where pg_catalog.to_regclass(required_table) is null;
+
+  if v_missing is not null then
+    raise exception 'Phase 5 stopped: prerequisite database tables are missing: %.', array_to_string(v_missing, ', ')
+      using errcode = '55000',
+        hint = 'Apply the Phase 1-4 migration files in timestamp order in this same project. public.service_records is created by 20261029000001_phase4_service_records.sql. Then rerun the whole Phase 5 file.';
+  end if;
+
+  select array_agg(required_function order by required_function) into v_missing
+  from unnest(array[
+    'public.set_updated_at()', 'public.is_company_member(uuid)',
+    'public.get_public_unitpass(uuid)', 'public.set_service_record_company()'
+  ]) as required_functions(required_function)
+  where pg_catalog.to_regprocedure(required_function) is null;
+
+  if v_missing is not null then
+    raise exception 'Phase 5 stopped: prerequisite database functions are missing: %.', array_to_string(v_missing, ', ')
+      using errcode = '55000',
+        hint = 'Apply the complete Phase 1-4 migration files, including their functions, triggers and RLS policies. Then rerun the whole Phase 5 file; do not create placeholder objects.';
+  end if;
+end
+$phase5_prerequisites$;
+
 do $$ begin
   create type public.document_type as enum ('Warranty', 'User Manual', 'Installation Invoice', 'Service Report', 'Other');
 exception when duplicate_object then null; end $$;

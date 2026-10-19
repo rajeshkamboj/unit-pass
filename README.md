@@ -284,6 +284,23 @@ If Storage DDL is unavailable to the CLI credentials, the owner must use the Das
    then run the SQL suite and the live HTTP checks in [`docs/phase5-verification.md`](docs/phase5-verification.md).
    A private bucket flag alone does not replace RLS for authenticated/API access.
 
+#### If SQL reports `42P01: relation "public.service_records" does not exist`
+
+The database you are connected to is missing Phase 4's service-history table, even if the Phase 4 **source code**
+is already merged. Verify that you selected the same Supabase project used by the app, then in **SQL Editor**
+(database role **`postgres`**):
+
+1. If your connection retains an aborted transaction, run `ROLLBACK;` first.
+2. Run the **entire** `supabase/migrations/20261029000001_phase4_service_records.sql` and confirm it succeeds.
+3. Run `select to_regclass('public.service_records');` — expect `service_records`, not `NULL`.
+4. Rerun the **entire corrected** `supabase/migrations/20261105000001_phase5_documents.sql`.
+
+If an earlier prerequisite is also absent, apply **all** migration files in filename/timestamp order, Phases 1–5
+(see section 3). The migrations preserve existing customer data and are idempotent. Do not create a dummy
+`service_records` table or remove the public service-history query to bypass the error: the real Phase 4 migration
+also installs tenant/RLS enforcement, triggers and the public-history whitelist. Phase 5 now performs read-only
+prerequisite checks immediately after `BEGIN`, before changing any objects, and names the missing migrations.
+
 #### If SQL reports `42501: must be owner of table objects`
 
 An earlier copy of Phase 5 incorrectly ran `ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY`.
@@ -354,6 +371,7 @@ never expose private data on public pages, and never build features from a later
 | Sign-in works but `/dashboard` bounces to sign-in | The session cookie is not being set (wrong `NEXT_PUBLIC_SUPABASE_URL`) or the middleware matcher was edited. |
 | Password reset link → "Link expired" | The link was already used, expired, or the `redirectTo` URL is not allowlisted in Supabase. |
 | `permission denied for table …` in tests | You are running the isolation test as a role that cannot `set role authenticated`; run it as the migration owner (`postgres`). |
+| `42P01: public.service_records does not exist` during Phase 5 | Apply the whole Phase 4 service-record migration in the same project first, then rerun the corrected Phase 5 file. Do not create a placeholder table. |
 | `42501: must be owner of table objects` during Phase 5 | Use the corrected migration, which checks RLS without altering Supabase's managed table; run the whole file as `postgres`. See the Phase 5 troubleshooting steps above. |
 | `infinite recursion detected in policy` | The legacy schema is still applied — run the Phase 1 migration, which replaces those policies. |
 

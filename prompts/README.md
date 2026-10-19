@@ -678,6 +678,8 @@ phase's acceptance criteria, and say "deferred to Phase N" instead of building i
 
 | 2026-10-19 | 5 follow-up | Replace the failed Storage table ALTER with a read-only, fail-closed RLS precondition; preserve all policies | hosted Supabase delegates policy management to `postgres` without granting ownership of `storage.objects`; never alter the managed table or bypass RLS to fix SQLSTATE 42501 |
 
+| 2026-10-19 | 5 follow-up | Check prior-phase database tables/functions at the start of Phase 5; name the missing Phase 4 migration instead of failing deep inside the RPC | merged source does not imply migrations were applied to the target project; keep service history/RLS intact and stop before making Phase 5 changes |
+
 Future phases: add a row per decision that changes architecture, dependencies, schema, or security posture.
 
 ---
