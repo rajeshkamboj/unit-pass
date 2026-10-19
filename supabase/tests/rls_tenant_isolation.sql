@@ -8,9 +8,10 @@
 -- Run:
 --   psql "$SUPABASE_DB_URL" -v ON_ERROR_STOP=1 -f supabase/tests/rls_tenant_isolation.sql
 --
--- Expected result: Phase 1, Phase 2 and Phase 3 "PASS: ..." notices and a final
--- "ALL CHECKS PASSED (Phase 1 + Phase 2 + Phase 3 tenant isolation)" notice,
--- ending with ROLLBACK. Any failed assertion raises an exception -> non-zero exit.
+-- Expected result: Phase 1, Phase 2, Phase 3 and Phase 4 "PASS: ..." notices and
+-- a final "ALL CHECKS PASSED (Phase 1 + Phase 2 + Phase 3 + Phase 4 tenant
+-- isolation)" notice, ending with ROLLBACK. Any failed assertion raises an
+-- exception -> non-zero exit.
 --
 -- Fixtures (deterministic ids so assertions can reference them as literals):
 --   user A    11111111-1111-4111-8111-111111111111
@@ -848,11 +849,321 @@ begin
 end
 $$;
 
+-- =============================================================================
+-- SECTION 4 — PHASE 4: service records, tenant resolution, public history
+-- =============================================================================
+reset role;
+
+-- Fixtures: deterministic service records for both tenants.
+--   * A's Downstairs AC (5555…551) has two entries; the private marker must
+--     never leave the database through the public RPC.
+--   * B's boiler (6666…661) has one recent entry plus 25 older bulk rows, so the
+--     public payload must cap at 20 and order newest first.
+insert into public.service_records (
+  id, company_id, equipment_id, service_date, service_type, technician_name,
+  public_notes, private_notes, next_service_date
+)
+values
+  (
+    '77777777-7777-4777-8777-777777777771',
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    '55555555-5555-4555-8555-555555555551',
+    '2026-09-15', 'Maintenance', 'Tech One',
+    'PUBLIC_SERVICE_NOTE_TEXT', 'PRIVATE_SERVICE_MARKER_98765', '2027-09-15'
+  ),
+  (
+    '77777777-7777-4777-8777-777777777772',
+    'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    '55555555-5555-4555-8555-555555555551',
+    '2026-03-10', 'Repair', 'Tech Two',
+    'Older public note', 'PRIVATE_SERVICE_MARKER_98765', null
+  ),
+  (
+    '88888888-8888-4888-8888-888888888881',
+    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    '66666666-6666-4666-8666-666666666661',
+    '2026-02-10', 'Inspection', 'Bravo Tech',
+    'Bravo recent public note', 'BRAVO_PRIVATE_SERVICE_MARKER', null
+  )
+on conflict (id) do nothing;
+
+insert into public.service_records (equipment_id, service_date, service_type, public_notes)
+select
+  '66666666-6666-4666-8666-666666666661',
+  date '2026-01-01' + (n || ' days')::interval,
+  'Other',
+  'Bulk history ' || n
+from generate_series(1, 25) as n;
+
+-- 4.1 A can select/update only its own service records and cannot touch B's.
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"11111111-1111-4111-8111-111111111111","role":"authenticated"}';
+
+do $$
+declare
+  v_own integer;
+  v_foreign integer;
+  v_updated integer;
+  v_deleted integer;
+begin
+  select count(*) into v_own
+    from public.service_records
+    where equipment_id = '55555555-5555-4555-8555-555555555551';
+  if v_own <> 2 then
+    raise exception 'FAIL: A sees % of its 2 service records', v_own;
+  end if;
+
+  select count(*) into v_foreign
+    from public.service_records
+    where company_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  if v_foreign <> 0 then
+    raise exception 'FAIL: A can select Company B service records (rows=%)', v_foreign;
+  end if;
+
+  update public.service_records
+    set technician_name = 'Hijacked'
+    where id = '88888888-8888-4888-8888-888888888881';
+  get diagnostics v_updated = row_count;
+  if v_updated <> 0 then
+    raise exception 'FAIL: A updated a Company B service record (rows=%)', v_updated;
+  end if;
+
+  delete from public.service_records
+    where id = '88888888-8888-4888-8888-888888888881';
+  get diagnostics v_deleted = row_count;
+  if v_deleted <> 0 then
+    raise exception 'FAIL: A deleted a Company B service record (rows=%)', v_deleted;
+  end if;
+
+  update public.service_records
+    set technician_name = 'Tech Two Edited'
+    where id = '77777777-7777-4777-8777-777777777772';
+  get diagnostics v_updated = row_count;
+  if v_updated <> 1 then
+    raise exception 'FAIL: A could not update its own service record (rows=%)', v_updated;
+  end if;
+
+  raise notice 'PASS: 4.1 A can select/update only its own service records (B is invisible)';
+end
+$$;
+
+-- 4.2 A cannot insert a service record for B's equipment (trigger resolves B,
+--     then RLS rejects the final row).
+do $$
+declare
+  v_rejected boolean := false;
+begin
+  begin
+    insert into public.service_records (equipment_id, service_date, service_type, public_notes)
+    values (
+      '66666666-6666-4666-8666-666666666661',
+      current_date, 'Maintenance', 'cross-tenant attempt'
+    );
+  exception
+    when others then
+      v_rejected := true;
+  end;
+
+  if not v_rejected then
+    raise exception 'FAIL: A inserted a service record for Company B equipment';
+  end if;
+  raise notice 'PASS: 4.2 service record insert for another tenant''s equipment is rejected';
+end
+$$;
+
+-- 4.3 A forged company_id (B) is overwritten by the BEFORE trigger: the row
+--     lands with A's company, so a browser-supplied tenant id is harmless.
+do $$
+declare
+  v_id uuid := gen_random_uuid();
+  v_company uuid;
+begin
+  insert into public.service_records (
+    id, company_id, equipment_id, service_date, service_type, technician_name
+  )
+  values (
+    v_id,
+    'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    '55555555-5555-4555-8555-555555555552',
+    current_date, 'Inspection', 'Spoof Test'
+  );
+
+  select company_id into v_company
+    from public.service_records
+    where id = v_id;
+
+  if v_company is distinct from 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' then
+    raise exception 'FAIL: forged company_id survived the trigger (%)', v_company;
+  end if;
+
+  raise notice 'PASS: 4.3 forged company_id is replaced by the equipment''s company';
+end
+$$;
+
+-- 4.4 A can delete its own log entries (explicit correction path).
+do $$
+declare
+  v_id uuid;
+  v_deleted integer;
+begin
+  insert into public.service_records (equipment_id, service_date, service_type, public_notes)
+  values (
+    '55555555-5555-4555-8555-555555555552',
+    date '2020-01-01', 'Other', 'Throwaway entry'
+  )
+  returning id into v_id;
+
+  delete from public.service_records where id = v_id;
+  get diagnostics v_deleted = row_count;
+  if v_deleted <> 1 then
+    raise exception 'FAIL: A could not delete its own service record (rows=%)', v_deleted;
+  end if;
+  raise notice 'PASS: 4.4 A can delete its own service records';
+end
+$$;
+
+-- 4.5 B's tenant view is isolated in both directions.
+reset role;
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"22222222-2222-4222-8222-222222222222","role":"authenticated"}';
+
+do $$
+declare
+  v_own integer;
+  v_foreign integer;
+begin
+  select count(*) into v_own
+    from public.service_records
+    where company_id = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  if v_own <> 26 then
+    raise exception 'FAIL: B sees % of its 26 service records', v_own;
+  end if;
+
+  select count(*) into v_foreign
+    from public.service_records
+    where company_id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  if v_foreign <> 0 then
+    raise exception 'FAIL: B can select Company A service records (rows=%)', v_foreign;
+  end if;
+  raise notice 'PASS: 4.5 B sees only its own service records';
+end
+$$;
+
+-- 4.6 Anonymous visitors have no table privileges on service_records.
+reset role;
+set local role anon;
+
+do $$
+declare
+  v_blocked integer := 0;
+begin
+  begin
+    perform 1 from public.service_records limit 1;
+  exception when others then
+    v_blocked := v_blocked + 1;
+  end;
+
+  if v_blocked <> 1 then
+    raise exception 'FAIL: anonymous role could read service_records';
+  end if;
+
+  if has_table_privilege('anon', 'public.service_records', 'select') then
+    raise exception 'FAIL: anon still holds SELECT on public.service_records';
+  end if;
+  if has_table_privilege('anon', 'public.service_records', 'insert')
+     or has_table_privilege('anon', 'public.service_records', 'update')
+     or has_table_privilege('anon', 'public.service_records', 'delete') then
+    raise exception 'FAIL: anon still holds write privileges on public.service_records';
+  end if;
+  raise notice 'PASS: 4.6 anon has no privileges on public.service_records';
+end
+$$;
+
+-- 4.7 The public RPC exposes a capped, ordered, whitelisted service history and
+--     never the private notes.
+do $$
+declare
+  v_alpha jsonb;
+  v_bravo jsonb;
+  v_length integer;
+  v_text text;
+begin
+  v_alpha := public.get_public_unitpass('cccccccc-cccc-4ccc-8ccc-ccccccccccc1');
+  v_bravo := public.get_public_unitpass('dddddddd-dddd-4ddd-8ddd-ddddddddddd1');
+
+  if v_alpha is null or v_bravo is null then
+    raise exception 'FAIL: public RPC returned no payload for a real token';
+  end if;
+
+  if jsonb_typeof(v_alpha -> 'service_history') is distinct from 'array' then
+    raise exception 'FAIL: service_history is not an array (%)',
+      jsonb_typeof(v_alpha -> 'service_history');
+  end if;
+
+  v_length := jsonb_array_length(v_alpha -> 'service_history');
+  if v_length <> 2 then
+    raise exception 'FAIL: A service history has % entries, expected 2', v_length;
+  end if;
+
+  if v_alpha -> 'service_history' -> 0 ->> 'service_date' is distinct from '2026-09-15' then
+    raise exception 'FAIL: service history is not newest first (%)',
+      v_alpha -> 'service_history' -> 0 ->> 'service_date';
+  end if;
+  if v_alpha -> 'service_history' -> 0 ->> 'service_type' is distinct from 'Maintenance' then
+    raise exception 'FAIL: service history has the wrong service_type (%)',
+      v_alpha -> 'service_history' -> 0 ->> 'service_type';
+  end if;
+  if v_alpha -> 'service_history' -> 0 ->> 'technician_name' is distinct from 'Tech One' then
+    raise exception 'FAIL: service history has the wrong technician (%)',
+      v_alpha -> 'service_history' -> 0 ->> 'technician_name';
+  end if;
+  if v_alpha -> 'service_history' -> 0 ->> 'public_notes' is distinct from 'PUBLIC_SERVICE_NOTE_TEXT' then
+    raise exception 'FAIL: service history has the wrong public notes (%)',
+      v_alpha -> 'service_history' -> 0 ->> 'public_notes';
+  end if;
+
+  if (v_alpha -> 'service_history' -> 0) ? 'private_notes' then
+    raise exception 'FAIL: private_notes is present in the public service history';
+  end if;
+  if (v_alpha -> 'service_history' -> 0) ? 'next_service_date' then
+    raise exception 'FAIL: next_service_date leaked into the public service history';
+  end if;
+
+  v_text := v_alpha::text;
+  if v_text like '%PRIVATE_SERVICE_MARKER_98765%' then
+    raise exception 'FAIL: private service notes leaked into the public payload';
+  end if;
+  if v_text like '%BRAVO_PRIVATE_SERVICE_MARKER%'
+     or v_text like '%Bravo recent public note%'
+     or v_text like '%Bulk history%' then
+    raise exception 'FAIL: another tenant''s service history leaked into A''s payload';
+  end if;
+  if v_text like '%77777777-7777-4777-8777-777777777771%'
+     or v_text like '%55555555-5555-4555-8555-555555555551%' then
+    raise exception 'FAIL: internal identifiers leaked into the public payload';
+  end if;
+
+  v_length := jsonb_array_length(v_bravo -> 'service_history');
+  if v_length <> 20 then
+    raise exception 'FAIL: public service history is not capped at 20 (got %)', v_length;
+  end if;
+  if v_bravo -> 'service_history' -> 0 ->> 'service_date' is distinct from '2026-02-10' then
+    raise exception 'FAIL: capped history is not newest first (%)',
+      v_bravo -> 'service_history' -> 0 ->> 'service_date';
+  end if;
+  if v_bravo::text like '%PRIVATE_SERVICE_MARKER_98765%' then
+    raise exception 'FAIL: A private marker leaked into B''s payload';
+  end if;
+
+  raise notice 'PASS: 4.7 public service history is ordered, capped at 20, whitelisted and private-note free';
+end
+$$;
+
 reset role;
 
 do $$
 begin
-  raise notice 'ALL CHECKS PASSED (Phase 1 + Phase 2 + Phase 3 tenant isolation)';
+  raise notice 'ALL CHECKS PASSED (Phase 1 + Phase 2 + Phase 3 + Phase 4 tenant isolation)';
 end
 $$;
 

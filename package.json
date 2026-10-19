@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "verify:dates": "node --experimental-strip-types --no-warnings scripts/verify-next-service-date.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",

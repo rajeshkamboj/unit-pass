@@ -667,6 +667,9 @@ phase's acceptance criteria, and say "deferred to Phase N" instead of building i
 | 2026-10-19 | 3 | A trigger rejects equipment whose `customer_id` belongs to another company (in addition to RLS on `company_id`) | blocks the "own company + foreign customer" pairing that RLS alone cannot express |
 | 2026-10-19 | 3 | QR generation uses `qrcode` (client, error correction M, 1024 px) with the payload built only in `src/lib/public/unitpass-url.ts`; the QR page warns when `NEXT_PUBLIC_SITE_URL` is unset | one source of truth for the URL and an explicit guard against printing localhost QR codes |
 | 2026-10-19 | 3 | Equipment photos deferred: `equipment_photo_path` column exists for the future signed-URL flow, legacy `equipment_photo_url` kept but unused (deprecated); no `SUPABASE_SERVICE_ROLE_KEY` needed yet | avoids storage/admin-client scope creep in this phase while keeping the public payload contract stable |
+| 2026-10-19 | 4 | `service_records.company_id` is resolved by a `before insert or update` trigger from `equipment.company_id`; RLS validates the resolved row | a browser-supplied tenant id is harmless and tenant policies stay one-liners (asserted in `rls_tenant_isolation.sql` §4) |
+| 2026-10-19 | 4 | All next-service math lives in `src/lib/services/next-service-date.ts` (date-fns `addMonths`); Mark Serviced is one server action that logs the visit and rolls the schedule | Phase 6 reminders and the dashboard must agree; month-end clamps are asserted by `pnpm verify:dates` |
+| 2026-10-19 | 4 | Public service history is capped at 20 and whitelists `service_date` / `service_type` / `technician_name` / `public_notes`; the client parser adds a key allow-list and fails closed | printed QR pages must never expose `private_notes`, and a SQL regression must not leak even if it reaches the page |
 
 Future phases: add a row per decision that changes architecture, dependencies, schema, or security posture.
 
